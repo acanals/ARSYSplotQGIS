@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 24 24">
+  <defs>
+    <radialGradient id="kde" cx="62%" cy="48%" r="78%">
+      <stop offset="0%" stop-color="#fde725"/>
+      <stop offset="28%" stop-color="#35b779"/>
+      <stop offset="58%" stop-color="#31688e"/>
+      <stop offset="100%" stop-color="#440154" stop-opacity="0.25"/>
+    </radialGradient>
+  </defs>
+  <rect x="0.4" y="0.4" width="23.2" height="23.2" rx="4" fill="#ffffff" stroke="#d0c9bf" stroke-width="0.8"/>
+
+  <!-- Plan XY -->
+  <rect x="1.5" y="1.5" width="10" height="10" rx="1.6" fill="#f4f0ea" stroke="#0f5c4c" stroke-width="1.1"/>
+  <path d="M3.1 10.3 V3.4 H10.1" fill="none" stroke="#0f5c4c" stroke-width="0.55" stroke-linecap="square" opacity="0.4"/>
+  <circle cx="4.5" cy="5.0" r="1.05" fill="#1a1816"/>
+  <circle cx="7.4" cy="3.8" r="0.9" fill="#c9a66b"/>
+  <circle cx="9.0" cy="6.8" r="1.05" fill="#1a1816"/>
+  <circle cx="5.4" cy="8.4" r="0.85" fill="#2f6fdb"/>
+  <circle cx="7.6" cy="9.1" r="0.75" fill="#1a1816"/>
+
+  <!-- Profile XZ -->
+  <rect x="12.5" y="1.5" width="10" height="10" rx="1.6" fill="#f4f0ea" stroke="#d97726" stroke-width="1.1"/>
+  <path d="M13.9 10.3 V3.35 H21.4" fill="none" stroke="#d97726" stroke-width="0.55" stroke-linecap="square" opacity="0.45"/>
+  <line x1="14.6" y1="4.15" x2="21.3" y2="4.15" stroke="#6b645c" stroke-width="0.7" stroke-linecap="round"/>
+  <circle cx="16.0" cy="5.35" r="0.9" fill="#1a1816"/>
+  <circle cx="18.0" cy="6.7" r="0.95" fill="#c9a66b"/>
+  <circle cx="20.1" cy="7.85" r="0.9" fill="#1a1816"/>
+  <circle cx="16.9" cy="9.35" r="0.85" fill="#2f6fdb"/>
+
+  <!-- Density -->
+  <rect x="1.5" y="12.5" width="10" height="10" rx="1.6" fill="#f4f0ea" stroke="#5b4a8a" stroke-width="1.1"/>
+  <ellipse cx="6.5" cy="17.6" rx="3.7" ry="3.15" fill="url(#kde)"/>
+  <path d="M3.6 18.5 C4.7 16.7 5.8 16.4 6.6 16.7 C7.6 17.1 8.5 16.5 9.5 17.4"
+        fill="none" stroke="#1a1816" stroke-width="0.4" opacity="0.35" stroke-linecap="round"/>
+
+  <!-- 3D -->
+  <rect x="12.5" y="12.5" width="10" height="10" rx="1.6" fill="#f4f0ea" stroke="#3a342e" stroke-width="1.1"/>
+  <text x="17.5" y="19.15" text-anchor="middle" font-size="5.4" font-family="DejaVu Sans, Liberation Sans, sans-serif" font-weight="700" fill="#3a342e">3D</text>
+</svg>

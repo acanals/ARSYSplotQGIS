@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ARSYSplotQGIS help</title>
+<style>
+  body { font: 15px/1.45 system-ui, sans-serif; color: #1a1816; max-width: 42rem; margin: 1.5rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.5rem; margin-bottom: 0.3rem; }
+  h2 { font-size: 1.15rem; margin-top: 1.6rem; border-bottom: 1px solid #ddd; padding-bottom: 0.2rem; }
+  h3 { font-size: 1rem; margin-top: 1.1rem; }
+  table { border-collapse: collapse; width: 100%; margin: 0.6rem 0 1rem; }
+  th, td { border: 1px solid #ccc; padding: 0.35rem 0.5rem; text-align: left; vertical-align: top; }
+  th { background: #f4f1ec; }
+  code { font-family: ui-monospace, monospace; font-size: 0.9em; }
+  .lead { color: #444; }
+</style>
+</head>
+<body>
+<h1>ARSYSplotQGIS</h1>
+<p class="lead">Archaeostratigraphic workspace for excavation XYZ points. Opens its own window; nothing is added to the QGIS map or legend.</p>
+
+<h2>Open the plugin</h2>
+<p>Toolbar icon, or <strong>Plugins → Vector → ARSYSplotQGIS</strong>.</p>
+
+<h2>Quick start</h2>
+<ol>
+  <li><strong>Load sample</strong> (bundled <code>sample.csv</code>), or <strong>Import CSV</strong>, or <strong>Use selected layer</strong>.</li>
+  <li>Turn group chips on/off. Drag the X Y Z sliders.</li>
+  <li>Wheel zooms a view; drag pans; <strong>Zoom</strong> opens a large window; <strong>Reset</strong> restores the initial view.</li>
+  <li>Optional: <strong>Density → On</strong>. Use <strong>Draw → None</strong> to see the surface alone.</li>
+  <li>Optional: <strong>Open 3D view</strong>.</li>
+</ol>
+
+<h2>Views</h2>
+<table>
+  <tr><th>View</th><th>Axes</th><th>Role</th></tr>
+  <tr><td>Plan</td><td>X / Y</td><td>Horizontal distribution</td></tr>
+  <tr><td>Longitudinal</td><td>X / Z</td><td>Long section</td></tr>
+  <tr><td>Transversal</td><td>Y / Z</td><td>Cross section</td></tr>
+  <tr><td>3D</td><td>X, Y, Z</td><td>Orbit / pan / zoom scatter (Qt, not QGIS 3D)</td></tr>
+</table>
+
+<h2>Data</h2>
+<p><strong>Import CSV</strong> detects comma, semicolon, tab or pipe. Map <strong>P1</strong> as the object centre. Optional <strong>P2</strong> and <strong>P3</strong> are the two ends of the orientation vector (P2→P3; if P3 is missing, P1→P2). <strong>Group</strong> is the colour class.</p>
+<p>Sample columns: <code>p1x | p1y | p1z | material | categoria | taxo | nivell</code>.</p>
+
+<h2>Filters and draw</h2>
+<ul>
+  <li><strong>Group</strong> — field, coloured chips, All / None.</li>
+  <li><strong>XYZ range</strong> — clip the cloud.</li>
+  <li><strong>Adaptive frame</strong> — Off: full extent. On: zoom to the filtered cloud.</li>
+  <li><strong>Draw</strong> — Points (P1), Vectors, Both, or None (for density).</li>
+</ul>
+
+<h2>Density</h2>
+<p>Kernel density of the <em>filtered</em> points. Stays inside the plugin.</p>
+<ul>
+  <li><strong>Show</strong> — Heatmap, Isolines, or Both.</li>
+  <li><strong>Min / Max</strong> — colour stretch on real KDE values. Below Min is not drawn. <strong>Auto</strong> = 2% cut and raster maximum.</li>
+  <li><strong>Radius / Cell</strong> — bandwidth and cell size. Auto suggests values from the extent.</li>
+  <li><strong>Kernel</strong> — Quartic, Triangular, Uniform, Triweight, Epanechnikov. Min/Max update for each kernel.</li>
+  <li><strong>Isolines / Labels / Opacity / Colour</strong> — contour count, line labels, fill opacity, palette.</li>
+</ul>
+
+<h2>Export</h2>
+<p>Each view: PNG paper figure of the data frame (title, subtitle, background, 96–600 dpi) with metre axes, grid, scale bar and legend.</p>
+
+<h2>Requirements and licence</h2>
+<p>QGIS 3.22 or later (tested on 3.40). No extra Python packages. GNU GPL-2.0-or-later.</p>
+<p>Full documentation: <a href="https://github.com/acanals/ARSYSplotQGIS">github.com/acanals/ARSYSplotQGIS</a></p>
+</body>
+</html>
