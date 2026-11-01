@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Kernel density (heatmap + isolines) from the filtered plugin points."""
+from contextlib import suppress
 import math
 
 from qgis.core import (
@@ -126,14 +127,12 @@ def make_ramp(scheme='viridis'):
     c1 = QColor(stops[-1][1], stops[-1][2], stops[-1][3])
     ramp = QgsGradientColorRamp(c0, c1)
     extra = []
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         from qgis.core import QgsGradientStop
         for t, r, g, b in stops[1:-1]:
             extra.append(QgsGradientStop(float(t), QColor(r, g, b)))
         if extra:
             ramp.setStops(extra)
-    except Exception:
-        pass
     return ramp
 
 
@@ -229,7 +228,7 @@ def _clamp_pixel(layer, radius, pixel):
 
 
 def _resampling_method(*names):
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         from qgis.core import Qgis
         enum = getattr(Qgis, 'RasterResamplingMethod', None)
         if enum is not None:
@@ -237,9 +236,7 @@ def _resampling_method(*names):
                 val = getattr(enum, name, None)
                 if val is not None:
                     return val
-    except Exception:
-        pass
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         from qgis.core import QgsRasterDataProvider
         enum = getattr(QgsRasterDataProvider, 'ResamplingMethod', None)
         if enum is not None:
@@ -247,26 +244,20 @@ def _resampling_method(*names):
                 val = getattr(enum, name, None)
                 if val is not None:
                     return val
-    except Exception:
-        pass
     return None
 
 
 def _enable_crisp_resample(rlayer):
     """Nearest neighbour so discrete colour bands stay sharp (hypsometric style)."""
     nearest = _resampling_method('Nearest', 'NearestNeighbour')
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         rlayer.setResamplingEnabled(False)
-    except Exception:
-        pass
     provider = rlayer.dataProvider()
     if provider is not None and nearest is not None:
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             provider.setZoomedInResamplingMethod(nearest)
             provider.setZoomedOutResamplingMethod(nearest)
-        except Exception:
-            pass
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         filt = rlayer.resampleFilter()
         if filt is not None:
             if hasattr(filt, 'setZoomedInResampler'):
@@ -275,8 +266,6 @@ def _enable_crisp_resample(rlayer):
                 filt.setZoomedOutResampler(None)
             if hasattr(filt, 'setMaxOversampling'):
                 filt.setMaxOversampling(1.0)
-    except Exception:
-        pass
 
 
 def _class_breaks(vmin, vmax, levels):
@@ -289,62 +278,48 @@ def _class_breaks(vmin, vmax, levels):
 
 
 def _discrete_ramp_type():
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         return QgsColorRampShader.Discrete
-    except Exception:
-        pass
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         from qgis.core import Qgis
         method = getattr(Qgis, 'ShaderInterpolationMethod', None)
         if method is not None:
             return method.Discrete
-    except Exception:
-        pass
     return None
 
 
 def _interpolated_ramp_type():
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         return QgsColorRampShader.Interpolated
-    except Exception:
-        pass
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         from qgis.core import Qgis
         method = getattr(Qgis, 'ShaderInterpolationMethod', None)
         if method is None:
             return None
         return getattr(method, 'Linear', None) or getattr(method, 'Interpolated', None)
-    except Exception:
-        pass
     return None
 
 
 def _enable_smooth_resample(rlayer):
     """Bilinear/cubic zoom so the KDE reads as a continuous field, not cells."""
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         rlayer.setResamplingEnabled(True)
-    except Exception:
-        pass
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         from qgis.core import Qgis
         stage = getattr(Qgis, 'RasterResamplingStage', None)
         if stage is not None and hasattr(rlayer, 'setResamplingStage'):
             filt = getattr(stage, 'ResampleFilter', None)
             if filt is not None:
                 rlayer.setResamplingStage(filt)
-    except Exception:
-        pass
     cubic = _resampling_method('Cubic', 'CubicSpline', 'Bilinear')
     zoomed_out = _resampling_method('Bilinear', 'Average', 'Cubic')
     provider = rlayer.dataProvider()
     if provider is not None and cubic is not None:
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             provider.setZoomedInResamplingMethod(cubic)
             if zoomed_out is not None:
                 provider.setZoomedOutResamplingMethod(zoomed_out)
-        except Exception:
-            pass
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         from qgis.core import QgsBilinearRasterResampler, QgsCubicRasterResampler
         filt = rlayer.resampleFilter()
         if filt is not None:
@@ -352,17 +327,10 @@ def _enable_smooth_resample(rlayer):
                 filt.setZoomedInResampler(QgsCubicRasterResampler())
             except Exception:
                 filt.setZoomedInResampler(QgsBilinearRasterResampler())
-            try:
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 filt.setZoomedOutResampler(QgsBilinearRasterResampler())
-            except Exception:
-                pass
             if hasattr(filt, 'setMaxOversampling'):
                 filt.setMaxOversampling(24.0)
-    except Exception:
-        pass
-
-
-def _run(alg_ids, params):
     processing = _processing()
     feedback = QgsProcessingFeedback()
     last = None
@@ -422,10 +390,8 @@ def build_heatmap(point_layer, radius, pixel, kernel=0):
     rlayer = QgsRasterLayer(path, point_layer.name() + ' · density')
     if not rlayer.isValid():
         return None
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         rlayer.reload()
-    except Exception:
-        pass
     rlayer.setCustomProperty('arsysplotqgis', 'density-raster')
     _enable_crisp_resample(rlayer)
     return rlayer
@@ -433,21 +399,17 @@ def build_heatmap(point_layer, radius, pixel, kernel=0):
 
 def _raster_size(rlayer):
     w = h = 0
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         w = int(rlayer.width() or 0)
         h = int(rlayer.height() or 0)
-    except Exception:
-        pass
     if w > 0 and h > 0:
         return w, h
     provider = rlayer.dataProvider() if rlayer is not None else None
     if provider is None:
         return 0, 0
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         w = int(provider.xSize() or 0)
         h = int(provider.ySize() or 0)
-    except Exception:
-        pass
     return w, h
 
 
@@ -540,7 +502,7 @@ def _hide_below(rlayer, renderer, vmin):
     from qgis.core import QgsRasterRange, QgsRasterTransparency
     provider = rlayer.dataProvider() if rlayer is not None else None
     lo = max(0.0, float(vmin))
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         if provider is None:
             pass
         elif lo <= 0.0:
@@ -556,8 +518,6 @@ def _hide_below(rlayer, renderer, vmin):
             provider.setUserNoDataValue(1, [rng])
             if hasattr(rlayer, 'setNoDataValue'):
                 rlayer.setNoDataValue(1, 0.0)
-    except Exception:
-        pass
     trans = QgsRasterTransparency()
     if lo > 0.0:
         try:
@@ -578,10 +538,8 @@ def _hide_below(rlayer, renderer, vmin):
             trans = QgsRasterTransparency()
     if renderer is None:
         return
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         renderer.setRasterTransparency(trans)
-    except Exception:
-        pass
 
 
 def _clip_range(rlayer, clip_min=None, clip_max=None):
@@ -627,10 +585,8 @@ def style_heatmap(rlayer, opacity=0.7, scheme='viridis', levels=8,
             items.append(QgsColorRampShader.ColorRampItem(val, c, '%.4g' % val))
         interp = _interpolated_ramp_type()
         if interp is not None:
-            try:
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 fn.setColorRampType(interp)
-            except Exception:
-                pass
     else:
         _interval, breaks = _class_breaks(vmin, vmax, levels)
         items = []
@@ -642,18 +598,12 @@ def style_heatmap(rlayer, opacity=0.7, scheme='viridis', levels=8,
             items.append(QgsColorRampShader.ColorRampItem(upper, c, '%.4g' % upper))
         discrete = _discrete_ramp_type()
         if discrete is not None:
-            try:
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 fn.setColorRampType(discrete)
-            except Exception:
-                pass
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         fn.setSourceColorRamp(make_ramp(scheme))
-    except Exception:
-        pass
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         fn.setClip(True)
-    except Exception:
-        pass
     fn.setMinimumValue(vmin)
     fn.setMaximumValue(vmax)
     fn.setColorRampItemList(items)
@@ -663,21 +613,17 @@ def style_heatmap(rlayer, opacity=0.7, scheme='viridis', levels=8,
     renderer.setClassificationMin(vmin)
     renderer.setClassificationMax(vmax)
     fn.setColorRampItemList(items)
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         renderer.setNodataColor(QColor(0, 0, 0, 0))
-    except Exception:
-        pass
     _hide_below(rlayer, renderer, vmin)
     rlayer.setRenderer(renderer)
     if fill == 'cloud':
         _enable_smooth_resample(rlayer)
     else:
         _enable_crisp_resample(rlayer)
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         rlayer.setCustomProperty('arsysplotqgis_fill', fill)
         rlayer.setCustomProperty('arsysplotqgis_scheme', scheme)
-    except Exception:
-        pass
     rlayer.setOpacity(opacity)
     rlayer.triggerRepaint()
 
@@ -725,14 +671,10 @@ def style_contour_labels(layer, on=False):
     if layer is None:
         return
     if not on:
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             layer.setLabelsEnabled(False)
-        except Exception:
-            pass
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             layer.setLabeling(None)
-        except Exception:
-            pass
         layer.triggerRepaint()
         return
     field = 'ELEV' if layer.fields().lookupField('ELEV') >= 0 else (
@@ -755,20 +697,14 @@ def style_contour_labels(layer, on=False):
         settings.isExpression = True
     except Exception:
         settings.fieldName = field
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         placement = getattr(QgsPalLayerSettings, 'Placement', None)
         settings.placement = placement.Line if placement is not None else QgsPalLayerSettings.Line
-    except Exception:
-        pass
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         settings.mergeLines = True
-    except Exception:
-        pass
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         settings.repeatDistance = 40
         settings.repeatDistanceUnit = QgsUnitTypes.RenderMillimeters
-    except Exception:
-        pass
     fmt = QgsTextFormat()
     try:
         fmt.setSize(6.5)
@@ -779,10 +715,8 @@ def style_contour_labels(layer, on=False):
     buf = QgsTextBufferSettings()
     buf.setEnabled(True)
     buf.setSize(0.8)
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         buf.setSizeUnit(QgsUnitTypes.RenderMillimeters)
-    except Exception:
-        pass
     buf.setColor(QColor('#ffffff'))
     fmt.setBuffer(buf)
     settings.setFormat(fmt)
@@ -894,11 +828,9 @@ def heatmap_legend(rlayer):
         return None
     fill = 'bands'
     scheme = DEFAULT_SCHEME
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         fill = rlayer.customProperty('arsysplotqgis_fill') or fill
         scheme = rlayer.customProperty('arsysplotqgis_scheme') or scheme
-    except Exception:
-        pass
     try:
         rend = rlayer.renderer()
         shader = rend.shader()
@@ -912,11 +844,9 @@ def heatmap_legend(rlayer):
         if rng is None:
             return None
         vmin, vmax = rng
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             vmin = float(rend.classificationMin())
             vmax = float(rend.classificationMax())
-        except Exception:
-            pass
         if vmax <= vmin:
             return None
         colors = [color_at(i / 23.0, scheme) for i in range(24)]

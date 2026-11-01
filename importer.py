@@ -73,14 +73,16 @@ def _guess_optional(headers, hints):
 
 def sniff_csv(path):
     raw = None
+    encoding = None
     for enc in ('utf-8-sig', 'utf-8', 'latin-1'):
         try:
             with open(path, 'r', encoding=enc, newline='') as fh:
                 raw = fh.read()
+        except UnicodeDecodeError:
+            raw = None
+        if raw is not None:
             encoding = enc
             break
-        except UnicodeDecodeError:
-            continue
     if raw is None:
         raise ValueError('Cannot read file encoding')
     sample = raw[:4096]

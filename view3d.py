@@ -6,6 +6,7 @@ Native QGIS 3D copies the main canvas / crashes 3.40.
 Matplotlib 3D scatter blanks and freezes when point size changes.
 This viewer projects the PointZ cloud with Qt (orbit / pan / zoom).
 """
+from contextlib import suppress
 import math
 
 from qgis.core import QgsCategorizedSymbolRenderer
@@ -97,12 +98,10 @@ def _feature_xyz(feat):
     except Exception:
         return None
     if feat.fields().lookupField('p1z') >= 0:
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             pz = feat['p1z']
             if pz is not None:
                 z = float(pz)
-        except Exception:
-            pass
     return x, y, z
 
 
@@ -131,10 +130,8 @@ def _color_lookup(layer):
             keys = [group_label(cat.value()), group_label(cat.label())]
             sym = cat.symbol()
             color = QColor('#4a90d9')
-            try:
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 color = sym.color()
-            except Exception:
-                pass
             for key in keys:
                 if key:
                     lookup[key] = color
@@ -746,11 +743,9 @@ def open_3d_view(iface, layer, parent=None, group_field=None, display_mode='poin
         return False
     live = []
     for dlg in getattr(iface, '_arsysplotqgis_3d', []):
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             if dlg.isVisible() and dlg.layer == layer:
                 live.append(dlg)
-        except Exception:
-            pass
     if live:
         dlg = live[-1]
         dlg.reload(
@@ -774,19 +769,19 @@ def open_3d_view(iface, layer, parent=None, group_field=None, display_mode='poin
 
 def apply_open_arrow_size(iface, arrow_size):
     for dlg in getattr(iface, '_arsysplotqgis_3d', []):
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             if dlg.isVisible():
                 dlg.set_arrow_size(arrow_size)
-        except Exception:
-            pass
 
 
 def refresh_open_views(iface, layer, group_field=None, display_mode=None, arrow_size=None):
     kept = []
     for dlg in getattr(iface, '_arsysplotqgis_3d', []):
-        try:
+        _ok = False
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             visible = dlg.isVisible()
-        except Exception:
+            _ok = True
+        if not _ok:
             continue
         if not visible:
             continue

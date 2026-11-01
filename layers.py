@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+from contextlib import suppress
 from qgis.core import (
     NULL,
     QgsCategorizedSymbolRenderer,
@@ -55,16 +56,12 @@ def arrow_px_from_mm(mm):
 def _num(value):
     if value is None:
         return None
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         if value == NULL or value is NULL:
             return None
-    except Exception:
-        pass
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         if hasattr(value, 'isNull') and value.isNull():
             return None
-    except Exception:
-        pass
     try:
         return float(value)
     except (TypeError, ValueError):
@@ -116,10 +113,8 @@ def _line_geom(a, b, with_z=True):
     if with_z:
         p0 = QgsPoint(float(a[0]), float(a[1]), float(a[2]))
         p1 = QgsPoint(float(b[0]), float(b[1]), float(b[2]))
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             return QgsGeometry.fromPolyline([p0, p1])
-        except Exception:
-            pass
     return QgsGeometry.fromPolylineXY([
         QgsPointXY(float(a[0]), float(a[1])),
         QgsPointXY(float(b[0]), float(b[1])),
@@ -129,16 +124,12 @@ def _line_geom(a, b, with_z=True):
 def is_empty_group(value):
     if value is None:
         return True
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         if value == NULL or value is NULL:
             return True
-    except Exception:
-        pass
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         if hasattr(value, 'isNull') and value.isNull():
             return True
-    except Exception:
-        pass
     s = str(value).strip()
     return s == '' or s.lower() in ('none', 'null', 'nan')
 
@@ -160,10 +151,8 @@ def keep_private(layer, project=None):
     if layer is None:
         return None
     project = project or QgsProject.instance()
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         layer.setFlags(layer.flags() | QgsMapLayer.Private)
-    except Exception:
-        pass
     if layer.id() not in project.mapLayers():
         project.addMapLayer(layer, False)
     return layer
@@ -243,27 +232,19 @@ def _apply_symbol_color(sym, color):
     c = QColor(color)
     if sym is None or not c.isValid():
         return
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         sym.setColor(c)
-    except Exception:
-        pass
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         for i in range(sym.symbolLayerCount()):
             sl = sym.symbolLayer(i)
             if sl is None:
                 continue
             if hasattr(sl, 'setFillColor'):
-                try:
+                with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                     sl.setFillColor(c)
-                except Exception:
-                    pass
             if hasattr(sl, 'setColor'):
-                try:
+                with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                     sl.setColor(c)
-                except Exception:
-                    pass
-    except Exception:
-        pass
 
 
 def _marker(color, size):
@@ -295,15 +276,11 @@ def style_by_group(layer, field='group', size=2.2, cmap=None, values=None):
     if not cats:
         return cmap
     renderer = QgsCategorizedSymbolRenderer(group_class_attr(field), cats)
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         renderer.setClassAttribute(group_class_attr(field))
-    except Exception:
-        pass
     if values:
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             renderer.setSourceSymbol(_marker(cmap.get(values[0], QColor('#888888')), size))
-        except Exception:
-            pass
     layer.setRenderer(renderer)
     layer.triggerRepaint()
     return cmap
@@ -318,16 +295,12 @@ def _place_marker_at_end(ml):
         except Exception:
             return
     if hasattr(ml, 'setPlacements'):
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             ml.setPlacements(last)
             return
-        except Exception:
-            pass
     if hasattr(ml, 'setPlacement'):
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             ml.setPlacement(last)
-        except Exception:
-            pass
 
 
 def _arrow_marker(color, head_mm):
@@ -345,20 +318,16 @@ def _arrow_marker(color, head_mm):
 
 
 def _symbol_color(lyr):
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         sub = lyr.subSymbol() if hasattr(lyr, 'subSymbol') else None
         if sub is not None and hasattr(sub, 'color'):
             c = sub.color()
             if c is not None and c.isValid():
                 return c
-    except Exception:
-        pass
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         c = lyr.color()
         if c is not None and c.isValid():
             return c
-    except Exception:
-        pass
     return QColor('#888888')
 
 
@@ -366,19 +335,15 @@ def _set_marker_size(sym, head_mm):
     if sym is None:
         return False
     if hasattr(sym, 'setSize'):
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             sym.setSize(head_mm)
             return True
-        except Exception:
-            pass
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         for i in range(sym.symbolLayerCount()):
             sl = sym.symbolLayer(i)
             if sl is not None and hasattr(sl, 'setSize'):
                 sl.setSize(head_mm)
                 return True
-    except Exception:
-        pass
     return False
 
 
@@ -399,10 +364,8 @@ def _line_sym(color, width, head=None):
     if hasattr(ml, 'setRotateSymbols'):
         ml.setRotateSymbols(True)
     if hasattr(ml, 'setAverageAngleLength'):
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             ml.setAverageAngleLength(0)
-        except Exception:
-            pass
     _place_marker_at_end(ml)
     sym.appendSymbolLayer(ml)
     return sym
@@ -427,10 +390,8 @@ def _scale_line_symbol(sym, width_mm=None, head_mm=None):
             continue
         if _set_marker_size(lyr.subSymbol() if hasattr(lyr, 'subSymbol') else None, head_mm):
             continue
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             lyr.setSubSymbol(_arrow_marker(_symbol_color(lyr), head_mm))
-        except Exception:
-            pass
 
 
 def style_lines_by_group(layer, field='group', width=0.6, head=None, values=None, cmap=None):
@@ -450,10 +411,8 @@ def style_lines_by_group(layer, field='group', width=0.6, head=None, values=None
     if not cats:
         return cmap
     renderer = QgsCategorizedSymbolRenderer(group_class_attr(field), cats)
-    try:
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         renderer.setClassAttribute(group_class_attr(field))
-    except Exception:
-        pass
     layer.setRenderer(renderer)
     layer.triggerRepaint()
     return cmap
@@ -667,9 +626,11 @@ def rebuild_section(source, section, mode):
         if geom is None or geom.isEmpty():
             continue
         pt = geom.constGet()
-        try:
+        _ok = False
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             x, y, z = float(pt.x()), float(pt.y()), float(pt.z()) if pt.is3D() else 0.0
-        except Exception:
+            _ok = True
+        if not _ok:
             continue
         if mode == 'long':
             g = QgsGeometry(QgsPoint(x, z))
@@ -716,9 +677,11 @@ def field_extent(layer, field):
     req = QgsFeatureRequest().setFlags(QgsFeatureRequest.NoGeometry).setSubsetOfAttributes([idx])
     for f in layer.dataProvider().getFeatures(req):
         v = f[field]
-        try:
+        _ok = False
+        with suppress(TypeError, ValueError):
             v = float(v)
-        except (TypeError, ValueError):
+            _ok = True
+        if not _ok:
             continue
         mn = v if mn is None else min(mn, v)
         mx = v if mx is None else max(mx, v)
@@ -765,9 +728,11 @@ def feature_extent(layer):
         geom = feat.geometry()
         if geom is None or geom.isEmpty():
             continue
-        try:
+        _ok = False
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             box = geom.boundingBox()
-        except Exception:
+            _ok = True
+        if not _ok:
             continue
         if box is None or box.isEmpty():
             continue
@@ -807,9 +772,11 @@ def padded_data_extent(layers, include_lines=True):
     for lyr in layers or []:
         if lyr is None or not hasattr(lyr, 'wkbType'):
             continue
-        try:
+        _ok = False
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             gtype = QgsWkbTypes.geometryType(lyr.wkbType())
-        except Exception:
+            _ok = True
+        if not _ok:
             continue
         if gtype == QgsWkbTypes.PointGeometry:
             pass
@@ -831,10 +798,12 @@ def point_layer_for_fit(layers):
     for lyr in layers or []:
         if lyr is None or not hasattr(lyr, 'wkbType'):
             continue
-        try:
+        _ok = False
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             if QgsWkbTypes.geometryType(lyr.wkbType()) == QgsWkbTypes.PointGeometry:
                 return lyr
-        except Exception:
+            _ok = True
+        if not _ok:
             continue
     return None
 
@@ -855,10 +824,12 @@ def xyz_extent(layer):
         if geom is None or geom.isEmpty():
             continue
         pt = geom.constGet()
-        try:
+        _ok = False
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             x, y = float(pt.x()), float(pt.y())
             z = float(pt.z()) if pt.is3D() else 0.0
-        except Exception:
+            _ok = True
+        if not _ok:
             continue
         xmin = x if xmin is None else min(xmin, x)
         xmax = x if xmax is None else max(xmax, x)

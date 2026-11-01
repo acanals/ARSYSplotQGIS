@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Metric axes + grid overlay for the three projection canvases (Lite-style)."""
+from contextlib import suppress
 import math
 
 from qgis.core import QgsPointXY, QgsRectangle
@@ -353,14 +354,10 @@ class AxesGridOverlay(QWidget):
         self._paper = False
         self._paper_bg = QColor('#ffffff')
         canvas.extentsChanged.connect(self.update)
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             canvas.scaleChanged.connect(lambda _s: self.update())
-        except Exception:
-            pass
-        try:
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             canvas.mapCanvasRefreshed.connect(self.update)
-        except Exception:
-            pass
 
     def wheelEvent(self, event):
         canvas = self.canvas
@@ -440,10 +437,8 @@ class AxesGridOverlay(QWidget):
             color = QColor('#888888')
             sym = cat.symbol()
             if sym is not None:
-                try:
+                with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                     color = QColor(sym.color())
-                except Exception:
-                    pass
             cmap[label] = color
             order.append(label)
         if title:

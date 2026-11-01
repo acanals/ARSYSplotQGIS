@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """ARSYSplotQGIS plugin entry (Vector menu + toolbar + Help)."""
+from contextlib import suppress
 import os
 
 from qgis.PyQt.QtGui import QIcon
@@ -42,10 +43,8 @@ class ARSYSplotQGISPlugin:
 
     def unload(self):
         if self.help_action is not None:
-            try:
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 self.iface.pluginHelpMenu().removeAction(self.help_action)
-            except Exception:
-                pass
             self.help_action = None
         if self.action:
             self.iface.removeToolBarIcon(self.action)

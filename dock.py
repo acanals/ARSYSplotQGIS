@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Lite-style workspace: plan / longitudinal / transversal + filters."""
+from contextlib import suppress
 import os
 
 from qgis.core import (
@@ -309,16 +310,12 @@ class PlotCanvas(QgsMapCanvas):
         self.extentsChanged.connect(self._on_extents)
         self._pan_last = None
         if hasattr(self, 'setLabelsVisible'):
-            try:
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 self.setLabelsVisible(True)
-            except Exception:
-                pass
         nothing = getattr(QgsMapCanvas, 'WheelNothing', None)
         if nothing is not None and hasattr(self, 'setWheelAction'):
-            try:
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 self.setWheelAction(nothing)
-            except Exception:
-                pass
 
     def fit_data_extent(self, ext):
         if ext is None or ext.isEmpty():
@@ -732,7 +729,7 @@ class PlotPane(QWidget):
             settings.setOutputDpi(float(dpi))
             settings.setBackgroundColor(bg)
             settings.setExtent(QgsRectangle(xmin, ymin, xmax, ymax))
-            try:
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 from qgis.core import Qgis
                 flags = getattr(Qgis, 'MapSettingsFlag', None)
                 if flags is not None:
@@ -743,8 +740,6 @@ class PlotPane(QWidget):
                         flag = getattr(flags, name, None)
                         if flag is not None:
                             settings.setFlag(flag, True)
-            except Exception:
-                pass
             bumped = []
             try:
                 for lyr in layers:
@@ -754,11 +749,9 @@ class PlotPane(QWidget):
                         filt = None
                     if filt is None or not hasattr(filt, 'setMaxOversampling'):
                         continue
-                    try:
+                    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                         bumped.append((filt, filt.maxOversampling()))
                         filt.setMaxOversampling(8.0)
-                    except Exception:
-                        pass
                 painter.save()
                 painter.translate(left, top)
                 painter.setClipRect(QRect(0, 0, plot_w, plot_h))
@@ -771,10 +764,8 @@ class PlotPane(QWidget):
                 painter.restore()
             finally:
                 for filt, old in bumped:
-                    try:
+                    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                         filt.setMaxOversampling(old)
-                    except Exception:
-                        pass
 
             paint_paper_axes(
                 painter, left, top, right, bottom,
@@ -1014,11 +1005,9 @@ class ARSYSDock(QMainWindow):
     def closeEvent(self, event):
         if self._force_close:
             for win in list(getattr(self, '_zoom_windows', {}).values()):
-                try:
+                with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                     win._force_close = True
                     win.close()
-                except Exception:
-                    pass
             self._drop_plugin_layers()
             event.accept()
             return
@@ -1689,21 +1678,17 @@ class ARSYSDock(QMainWindow):
             if ext is not None and not ext.isEmpty():
                 pane.canvas.fit_data_extent(ext)
         for win in list(getattr(self, '_zoom_windows', {}).values()):
-            try:
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 if win.isVisible() and win._layer is not None:
                     win._fit()
-            except Exception:
-                pass
         for dlg in list(getattr(self.iface, '_arsysplotqgis_3d', [])):
-            try:
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 if dlg.isVisible():
                     dlg.reload(
                         self.group_field, keep_camera=False,
                         display_mode=self._draw_mode_for_3d(),
                         arrow_size=self.arrow_size,
                     )
-            except Exception:
-                pass
 
     def _apply_filters_now(self):
         if not self.source:
@@ -2212,14 +2197,12 @@ class ARSYSDock(QMainWindow):
         except Exception:
             alive = False
         if alive:
-            try:
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 win.reload(layers, pane.canvas)
                 win.show()
                 win.raise_()
                 win.activateWindow()
                 return
-            except Exception:
-                pass
         win = ZoomWindow(pane, layers, parent=self)
         self._zoom_windows[key] = win
         win.show()
@@ -2229,9 +2212,11 @@ class ARSYSDock(QMainWindow):
     def _refresh_zooms(self):
         kept = {}
         for key, win in list(self._zoom_windows.items()):
-            try:
+            _ok = False
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 visible = win.isVisible()
-            except Exception:
+                _ok = True
+            if not _ok:
                 continue
             if not visible:
                 kept[key] = win
