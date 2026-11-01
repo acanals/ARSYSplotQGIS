@@ -98,7 +98,7 @@ def _len2(a, b):
 
 
 def vector_endpoints(feat):
-    """P2→P3 if both exist; else legacy P1→P2. None if no axis."""
+    """P2→P3 after import. Legacy P1→P2 if P3 is still missing. None if no axis."""
     p1 = xyz_from_prefix(feat, 'p1')
     p2 = xyz_from_prefix(feat, 'p2')
     p3 = xyz_from_prefix(feat, 'p3')

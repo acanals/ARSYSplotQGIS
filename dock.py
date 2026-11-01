@@ -1146,7 +1146,9 @@ class ARSYSDock(QMainWindow):
             self._draw_group.addButton(btn)
         self.btn_draw_points.setChecked(True)
         self.btn_draw_points.setToolTip('P1: object centre.')
-        self.btn_draw_vectors.setToolTip('P2→P3 (or P1→P2 if P3 is missing).')
+        self.btn_draw_vectors.setToolTip(
+            'P2→P3 after import. If a layer still has only P1→P2, that axis is used.'
+        )
         self.btn_draw_both.setToolTip('Centre point and axis of each object.')
         self.btn_draw_none.setToolTip(
             'Hide points and vectors so the density surface is fully visible.'

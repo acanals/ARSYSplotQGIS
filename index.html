@@ -41,8 +41,8 @@
 </table>
 
 <h2>Data</h2>
-<p><strong>Import CSV</strong> detects comma, semicolon, tab or pipe. Map <strong>P1</strong> as the object centre. Optional <strong>P2</strong> and <strong>P3</strong> are the two ends of the orientation vector (P2→P3; if P3 is missing, P1→P2). <strong>Group</strong> is the colour class.</p>
-<p>Sample columns: <code>p1x | p1y | p1z | material | categoria | taxo | nivell</code>.</p>
+<p><strong>Import CSV</strong> detects comma, semicolon, tab or pipe. Three XYZ layouts (per row): <strong>P1 only</strong> (point); <strong>P1→P2</strong> (vector: stored as P2/P3 with P1 = midpoint); <strong>P1 + P2 + P3</strong> (unchanged: point P1, vector P2→P3). <strong>Group</strong> is the colour class.</p>
+<p>Sample columns: <code>p1x | p1y | p1z | p2x | p2y | p2z | p3x | p3y | p3z | material | categoria | taxo | nivell</code>.</p>
 
 <h2>Filters and draw</h2>
 <ul>

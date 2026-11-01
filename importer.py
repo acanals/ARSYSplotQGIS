@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""CSV → PointZ memory layer (P1 centre, optional P2→P3 vector)."""
+"""CSV → PointZ memory layer (P1 point, optional P2→P3 vector)."""
 import csv
 import os
 
@@ -163,6 +163,48 @@ def _col_index(headers, name):
     return headers.index(name)
 
 
+def _pt(x, y, z):
+    return (x, y, 0.0 if z is None else z)
+
+
+def normalize_p123(x1, y1, z1, x2, y2, z2, x3, y3, z3):
+    """Canonical P1 (centre) and optional P2→P3 vector.
+
+    Per row:
+    1. P1 only — point, no vector.
+    2. P1 and P2, no P3 — input is the vector P1→P2. Stored P2 is old P1,
+       stored P3 is old P2, stored P1 is the midpoint.
+    3. P1, P2 and P3 — unchanged. Point is P1, vector is P2→P3.
+    If P1 is missing but P2 and P3 exist, P1 is the midpoint of P2→P3.
+    """
+    has1 = x1 is not None and y1 is not None
+    has2 = x2 is not None and y2 is not None
+    has3 = x3 is not None and y3 is not None
+    if has1 and has2 and has3:
+        return _pt(x1, y1, z1), _pt(x2, y2, z2), _pt(x3, y3, z3)
+    if has1 and has2 and not has3:
+        start = _pt(x1, y1, z1)
+        end = _pt(x2, y2, z2)
+        mid = (
+            0.5 * (start[0] + end[0]),
+            0.5 * (start[1] + end[1]),
+            0.5 * (start[2] + end[2]),
+        )
+        return mid, start, end
+    if has1:
+        return _pt(x1, y1, z1), None, None
+    if has2 and has3:
+        start = _pt(x2, y2, z2)
+        end = _pt(x3, y3, z3)
+        mid = (
+            0.5 * (start[0] + end[0]),
+            0.5 * (start[1] + end[1]),
+            0.5 * (start[2] + end[2]),
+        )
+        return mid, start, end
+    return None
+
+
 def build_pointz_layer(
     path, x_field, y_field, z_field, group_field, crs=None,
     p2x_field='', p2y_field='', p2z_field='',
@@ -173,7 +215,7 @@ def build_pointz_layer(
     has_p2 = p2x_field in headers and p2y_field in headers
     has_p3 = p3x_field in headers and p3y_field in headers
     if not has_p1 and not (has_p2 and has_p3):
-        raise ValueError('Need P1 X/Y, or P2 and P3 X/Y to compute the centre')
+        raise ValueError('Need P1 X/Y, or both P2 and P3 X/Y')
     crs = crs or site_crs()
     uri = 'PointZ?crs=%s' % (crs.authid() or 'EPSG:25831')
     name = os.path.splitext(os.path.basename(path))[0] or 'ARSYSplot_points'
@@ -243,19 +285,20 @@ def build_pointz_layer(
         x3 = _to_float(cell(i3x))
         y3 = _to_float(cell(i3y))
         z3 = _to_float(cell(i3z))
-        if x2 is not None and y2 is not None and x3 is not None and y3 is not None:
-            if x1 is None or y1 is None:
-                x1 = 0.5 * (x2 + x3)
-                y1 = 0.5 * (y2 + y3)
-                if z1 is None:
-                    za = 0.0 if z2 is None else z2
-                    zb = 0.0 if z3 is None else z3
-                    z1 = 0.5 * (za + zb)
-        if x1 is None or y1 is None:
+        norm = normalize_p123(x1, y1, z1, x2, y2, z2, x3, y3, z3)
+        if norm is None:
             skipped += 1
             continue
-        if z1 is None:
-            z1 = 0.0
+        p1, p2, p3 = norm
+        x1, y1, z1 = p1
+        if p2 is None:
+            x2 = y2 = z2 = None
+        else:
+            x2, y2, z2 = p2
+        if p3 is None:
+            x3 = y3 = z3 = None
+        else:
+            x3, y3, z3 = p3
         g = str(cell(ig)).strip() if ig is not None else ''
         if not g:
             g = '(empty)'
@@ -278,7 +321,7 @@ def build_pointz_layer(
         feats.append(feat)
 
     if not feats:
-        raise ValueError('No plottable rows (need P1 X/Y, or P2 and P3 to compute P1)')
+        raise ValueError('No plottable rows (need P1 X/Y, or both P2 and P3 X/Y)')
     prov.addFeatures(feats)
     layer.updateExtents()
     layer.setCustomProperty('arsysplotqgis', 'source')
@@ -308,21 +351,24 @@ class ImportCsvDialog(QDialog):
         self.cmb_g.addItem('(none)', '')
 
         hint = QLabel(
-            'P1 is the object centre. Vector is P2→P3 (the two ends). '
-            'If P3 is missing, P1→P2 is used (older Arche10 files).'
+            'Three XYZ layouts (applied per row):\n'
+            '1. P1 only — P1 is the point; no vector.\n'
+            '2. P1 and P2 (no P3) — input is the vector P1→P2. '
+            'Stored as P2 = old P1, P3 = old P2; P1 becomes the midpoint.\n'
+            '3. P1, P2 and P3 — unchanged. P1 is the point; vector is P2→P3.'
         )
         hint.setWordWrap(True)
         hint.setStyleSheet('color:#888;')
 
         form = QFormLayout()
         form.addRow('File', self.lbl_file)
-        form.addRow('P1 X (centre)', self.cmb_x)
+        form.addRow('P1 X', self.cmb_x)
         form.addRow('P1 Y', self.cmb_y)
         form.addRow('P1 Z', self.cmb_z)
-        form.addRow('P2 X (vector start)', self.cmb_p2x)
+        form.addRow('P2 X', self.cmb_p2x)
         form.addRow('P2 Y', self.cmb_p2y)
         form.addRow('P2 Z', self.cmb_p2z)
-        form.addRow('P3 X (vector end)', self.cmb_p3x)
+        form.addRow('P3 X', self.cmb_p3x)
         form.addRow('P3 Y', self.cmb_p3y)
         form.addRow('P3 Z', self.cmb_p3z)
         form.addRow('Group', self.cmb_g)
@@ -418,7 +464,7 @@ class ImportCsvDialog(QDialog):
         if not has_p1 and not (has_p2 and has_p3):
             QMessageBox.warning(
                 self, 'Import',
-                'Map P1 X/Y (centre), or both P2 and P3 X/Y to compute it.'
+                'Map P1 X/Y, or both P2 and P3 X/Y.'
             )
             return
         self.accept()

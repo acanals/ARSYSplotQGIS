@@ -474,7 +474,9 @@ class Scatter3DDialog(QDialog):
             btn.setCheckable(True)
             self._draw_group.addButton(btn)
         self.btn_draw_points.setToolTip('P1: object centre.')
-        self.btn_draw_vectors.setToolTip('P2→P3 (or P1→P2 if P3 is missing).')
+        self.btn_draw_vectors.setToolTip(
+            'P2→P3 after import. If a layer still has only P1→P2, that axis is used.'
+        )
         self.btn_draw_both.setToolTip('Centre point and axis of each object.')
         self.btn_draw_vectors.setEnabled(False)
         self.btn_draw_both.setEnabled(False)
@@ -557,7 +559,7 @@ class Scatter3DDialog(QDialog):
         self.cloud = CloudWidget()
         hint = QLabel(
             'Left-drag rotate · right-drag pan · wheel zoom. '
-            'P1 = centre · vector = P2→P3 (or P1→P2).'
+            'P1 = centre · vector = P2→P3.'
         )
         hint.setStyleSheet('color:#999;')
 

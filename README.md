@@ -1,6 +1,6 @@
 # ARSYSplotQGIS
 
-A QGIS 3 plugin designed to **support archaeostratigraphic analysis and interpretation** through the visualisation and spatial analysis of archaeological excavation XYZ data.
+A QGIS 3 plugin designed to **support archaeostratigraphic analysis and interpretation** through the visualisation and spatial analysis of archaeological excavation XYZ data. 
 
 ARSYSplotQGIS provides an **independent archaeostratigraphic workspace** with three linked 2D projections of the excavation data — plan (X/Y), longitudinal section (X/Z) and transversal section (Y/Z) — and an interactive 3D view.
 
@@ -20,21 +20,6 @@ Filter data by **group** and **XYZ range**, display **points**, **orientation ve
 **Licence:** [GNU GPL-2.0-or-later](LICENSE) · © 2026 Antoni Canals-Salomó (URV IPHES-CERCA)
 
 Source code, issues and documentation: <https://github.com/acanals/ARSYSplotQGIS>
-
----
-
-## Why ARSYSplotQGIS?
-
-Archaeological fieldwork and laboratory analysis often require the **plan and both vertical sections to be examined together**, using the same data and filters. A conventional GIS map, focused on individual layers, does not provide this kind of integrated workspace.
-
-ARSYSplotQGIS provides a dedicated environment for this purpose, directly within QGIS:
-
-- **Three linked 2D views** — plan, longitudinal and transversal sections, working with the same dataset and filters.
-- **Independent workspace** — plugin data and visualisations remain private to the plugin. Nothing is added to the QGIS project.
-- **Lightweight 3D visualisation** — uses Qt painting rather than the QGIS 3D engine, avoiding compatibility issues encountered with QGIS 3.40.
-- **No additional Python dependencies** — relies exclusively on Python libraries and Processing algorithms included with QGIS.
-
-ARSYSplotQGIS is designed specifically for archaeostratigraphic data exploration. It is not a general-purpose GIS editor, a replacement for the QGIS 3D map view, or an alternative version of the browser-based ARSYSplotLite.
 
 ---
 
@@ -102,16 +87,20 @@ During import, map the CSV columns to the following fields:
 
 | Field | Description |
 | --- | --- |
-| **P1 X / Y / Z** | Object centre coordinates |
-| **P2 X / Y / Z** | Orientation vector start point (optional) |
-| **P3 X / Y / Z** | Orientation vector end point (optional) |
+| **P1 X / Y / Z** | Point, or start of a P1→P2 vector |
+| **P2 X / Y / Z** | End of a P1→P2 vector, or start of a P2→P3 vector (optional) |
+| **P3 X / Y / Z** | End of a P2→P3 vector (optional) |
 | **Group** | Classification attribute used to colour the data (material, level, etc.) |
 
-Coordinate interpretation:
+The layout is interpreted **per row**:
 
-- If P1 is missing but P2 and P3 are available, the object centre is calculated as the midpoint between P2 and P3.
-- If P3 is missing, the orientation vector is defined by **P1 → P2**, as in older Arche10 files.
-- If P3 is available, the orientation vector is defined by **P2 → P3**.
+1. **P1 only** — P1 is the point. No orientation vector.
+2. **P1 and P2, no P3** — the file stores the vector **P1 → P2**. The plugin transposes it: stored P2 is the original P1, stored P3 is the original P2, and stored P1 is the **midpoint** (object centre).
+3. **P1, P2 and P3** — coordinates are not modified. P1 is the point; the vector is **P2 → P3**.
+
+If P1 is missing but P2 and P3 are present, P1 is calculated as the midpoint of P2→P3.
+
+After import, drawing always uses **P1 as the point** and **P2 → P3 as the vector**. Mixed files are allowed (some rows points-only, others with axes).
 
 Imported coordinates are stored in a private **PointZ memory layer**. Additional CSV columns are preserved as attributes.
 
@@ -271,3 +260,50 @@ The following features are not available in this version:
 - Exporting or adding density isolines directly to the QGIS project.
 
 See the [issue tracker](https://github.com/acanals/ARSYSplotQGIS/issues) for planned improvements and development updates.
+
+---
+
+## More information
+
+ARSYSplotQGIS is the **QGIS plugin counterpart** of [ARSYSplotLite](https://arche.iphes.cat), a browser-based viewer for archaeological XYZ data. Both tools display **points and orientation vectors**, and provide dedicated **kernel density estimation (KDE)** tools to generate density maps (heatmaps and isolines) from excavation data.
+
+ARSYSplotLite is part of **ArcheSystem → Analytics**. It is the lightweight edition of **ARSYSplot**, the core archaeostratigraphic analysis and visualisation application in the suite.
+
+**Explore the ArcheSystem suite:**
+
+- **[ArcheSystem – Main website](https://arche.iphes.cat)**
+- **[ArcheSystem – Analytics](https://arche.iphes.cat/analytics)** — ARSYSplot and ARSYSplotLite.
+
+**ARSYSplot** focuses on archaeostratigraphy and spatial distribution, and also incorporates taphosedimentary analysis, including the dip and orientation of archaeological objects and other indicators of how materials accumulated and were subsequently reworked within the deposit.
+
+All three tools share the same approach to archaeological data interpretation: examining plans and vertical sections together, applying group filters, and analysing spatial density. Each brings this approach to a different working environment: ARSYSplotQGIS within QGIS, ARSYSplotLite in a web browser, and ARSYSplot as the full Analytics application also in a web browser.
+
+### Continuous development
+
+**ARSYSplot**, the core application in the suite, is an ongoing development project. Its continuous evolution, including new analytical approaches, features and improvements, also benefits **ARSYSplotLite** and **ARSYSplotQGIS**. Although each application has its own interface and working environment, they share the same underlying approach to archaeostratigraphic analysis. Advances in the main application help guide and enrich the development of both complementary tools.
+
+### Why ARSYSplotQGIS?
+
+Archaeological fieldwork and laboratory research often require **the plan and both vertical sections to be examined simultaneously**, using the same dataset and filters. Conventional GIS interfaces, primarily organised around individual map layers, do not provide this kind of integrated archaeostratigraphic workspace.
+
+ARSYSplotQGIS provides a dedicated environment for this type of analysis, directly within QGIS:
+
+- **Three linked 2D views** — plan, longitudinal and transversal sections, all working with the same dataset and filters.
+- **Independent workspace** — plugin data and visualisations remain within the plugin's own workspace. Nothing is added to the QGIS project, map canvas or layer legend.
+- **Lightweight 3D visualisation** — based on Qt painting rather than the QGIS 3D engine, avoiding compatibility issues encountered with QGIS 3.40.
+- **No additional Python dependencies** — relies exclusively on Python libraries and Processing algorithms already included with QGIS.
+
+ARSYSplotQGIS is designed specifically for **archaeostratigraphic data exploration and interpretation**. It is neither a general-purpose GIS editor nor a replacement for the QGIS 3D map view.
+
+### Why QGIS?
+
+QGIS provides an **integrated working environment** in which archaeostratigraphic analysis can be carried out alongside the site's maps, raster data, vector layers and print layouts. ARSYSplotQGIS operates in its own workspace, without modifying the QGIS project, while the rest of the GIS environment remains readily accessible.
+
+QGIS also provides a comprehensive set of **spatial analysis tools widely used in archaeological research**, without requiring additional software:
+
+- Coordinate reference systems, georeferencing and the overlay of excavation grids, DEMs and orthophotos.
+- Vector geoprocessing (clipping, buffering and intersection) and spatial queries on features recorded during fieldwork.
+- Raster analysis and interpolation, as well as density estimation and contour generation through the Processing framework — including algorithms from the same family used by this plugin to produce heatmaps and isolines.
+- Cartographic output through print layouts, together with an extensive plugin ecosystem for heritage management, databases and statistical analysis.
+
+ARSYSplotQGIS is therefore **not simply a browser-based viewer reproduced inside QGIS**. It brings the ArcheSystem approach to archaeostratigraphic analysis directly into the GIS environment where the rest of the archaeological spatial work takes place.
