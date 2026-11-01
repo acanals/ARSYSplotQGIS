@@ -957,11 +957,7 @@ class ARSYSDock(QMainWindow):
 
         self.setWindowTitle('ARSYSplotQGIS')
         self.setObjectName('ARSYSplotQGISWindow')
-        for name in ('ArcheIcon.png', 'icon.png', 'icon.svg'):
-            path = os.path.join(PLUGIN_DIR, name)
-            if os.path.isfile(path):
-                self.setWindowIcon(QIcon(path))
-                break
+        self.setWindowIcon(QIcon(os.path.join(PLUGIN_DIR, 'ArcheIcon.png')))
         self.setWindowFlag(Qt.Window, True)
         self.resize(1280, 840)
         self.setMinimumSize(720, 520)

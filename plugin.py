@@ -19,12 +19,7 @@ class ARSYSplotQGISPlugin:
         self.dock = None
 
     def initGui(self):
-        icon = QIcon()
-        for name in ('ArcheIcon.png', 'icon.png', 'icon.svg'):
-            path = os.path.join(PLUGIN_DIR, name)
-            if os.path.isfile(path):
-                icon.addFile(path)
-                break
+        icon = QIcon(os.path.join(PLUGIN_DIR, 'ArcheIcon.png'))
         self.action = QAction(icon, 'ARSYSplotQGIS', self.iface.mainWindow())
         self.action.setToolTip(
             'Archaeostratigraphic workspace: plan, sections, density and 3D'
