@@ -271,8 +271,9 @@ ARSYSplotLite is part of **ArcheSystem → Analytics**. It is the lightweight ed
 
 **Explore the ArcheSystem suite:**
 
-- **[ArcheSystem – Main website](https://arche.iphes.cat)**
-- **[ArcheSystem – Analytics](https://arche.iphes.cat/analytics)** — ARSYSplot and ARSYSplotLite.
+- **<a href="https://arche.iphes.cat" target="_blank" rel="noopener noreferrer">ArcheSystem – Main website</a>**
+- **<a href="https://arche.iphes.cat/analytics" target="_blank" rel="noopener noreferrer">ArcheSystem – Analytics</a>** — ARSYSplot and ARSYSplotLite.
+
 
 **ARSYSplot** focuses on archaeostratigraphy and spatial distribution, and also incorporates taphosedimentary analysis, including the dip and orientation of archaeological objects and other indicators of how materials accumulated and were subsequently reworked within the deposit.
 
