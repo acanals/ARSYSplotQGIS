@@ -20,7 +20,7 @@ Aquest fitxer és per a qui puja el plugin. No va dins del ZIP (`make zip` l’e
 | Mida &lt; 25 MB | OK |
 | Icona PNG | `ArcheIcon.png` |
 | Menú adequat | Vector (+ toolbar + Help → Plugins) |
-| `experimental=True` a la primera versió pública | Sí |
+| `experimental=False` (versió estable) | Sí |
 | `changelog` amb el número de versió | 0.2.0 / 0.1.1 / 0.1.0 |
 | El ZIP i el GitHub han de ser el **mateix** codi | Comprova abans de pujar |
 
@@ -95,11 +95,9 @@ ARSYSplotQGIS.0.2.0.zip
 
 1. <https://plugins.qgis.org/plugins/upload/>
 2. Puja el ZIP.
-3. Deixa **experimental = True**.
+3. Deixa **experimental** desmarcat (el ZIP ja porta `experimental=False`).
 4. Rebràs un correu de recepció i un altre de l’escaneig de seguretat.
 5. Un voluntari aprova (minuts o dies; cap de setmana → dilluns). Si `homepage` no descriu l’ús, el rebutgen: el README de GitHub és l’enllaç correcte.
-
-A QGIS, l’usuari ha de marcar *Mostra també els complements experimentals* fins que treguis `experimental=True`.
 
 ## 5. Versions següents
 

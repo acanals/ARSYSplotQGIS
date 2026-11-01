@@ -22,7 +22,6 @@ about=ARSYSplotQGIS is a QGIS 3 plugin for archaeostratigraphic reading of excav
     Requires QGIS 3.22 or later (tested on 3.40). Uses only the Python that ships with QGIS, plus the bundled Processing heatmap and contour algorithms.
     No pip packages, no binaries, no internet connection at runtime.
     Sample data (sample.csv) is included: p1x, p1y, p1z, material, categoria, taxo, nivell. Use Load sample.
-    This first public version is marked experimental: enable Show also experimental plugins in Plugin Manager if it does not appear.
     Documentation: Help → Plugins → ARSYSplotQGIS, or the README in the code repository (homepage).
     Licence: GNU GPL-2.0-or-later (required by the QGIS plugin repository).
 tracker=https://github.com/acanals/ARSYSplotQGIS/issues
@@ -30,12 +29,13 @@ repository=https://github.com/acanals/ARSYSplotQGIS
 homepage=https://github.com/acanals/ARSYSplotQGIS
 category=Vector
 icon=ArcheIcon.png
-experimental=True
+experimental=False
 deprecated=False
 hasProcessingProvider=False
 server=False
 tags=archaeology,archaeostratigraphy,excavation,stratigraphy,heatmap,kde,isolines,3d,csv,points,sections
 changelog=0.2.0
+    - First stable public release
     - Documentation for plugins.qgis.org (README and in-plugin help)
     - Kernel density: heatmap and isolines, palettes, Min/Max clip, Auto 2% cut
     - Kernels: Quartic, Triangular, Uniform, Triweight, Epanechnikov

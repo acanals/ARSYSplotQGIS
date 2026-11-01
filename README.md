@@ -39,9 +39,8 @@ Source code, issues and documentation: <https://github.com/acanals/ARSYSplotQGIS
 ### From the QGIS Plugin Repository
 
 1. Open **Plugins → Manage and Install Plugins**.
-2. Enable **Show also experimental plugins** (the first public release is classified as experimental).
-3. Search for **ARSYSplotQGIS** and install it.
-4. Open the plugin from:
+2. Search for **ARSYSplotQGIS** and install it.
+3. Open the plugin from:
    - **Plugins → Vector → ARSYSplotQGIS**.
    - The plugin toolbar icon.
    - **Help → Plugins → ARSYSplotQGIS** to access this documentation.
