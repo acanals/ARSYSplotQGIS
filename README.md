@@ -1,6 +1,6 @@
 # ARSYSplotQGIS
 
-QGIS 3 plugin for the **archaeostratigraphic analysis and visualization** of points (XYZ) from archaeological excavations
+A QGIS 3 plugin designed to **support archaeostratigraphic analysis and interpretation** through the visualisation and spatial analysis of archaeological excavation XYZ data.
 
 ARSYSplotQGIS provides an **independent archaeostratigraphic workspace** with three linked 2D projections of the excavation data — plan (X/Y), longitudinal section (X/Z) and transversal section (Y/Z) — and an interactive 3D view.
 
