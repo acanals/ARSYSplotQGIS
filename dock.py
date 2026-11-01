@@ -6,6 +6,7 @@ import os
 from qgis.core import (
     QgsMapRendererCustomPainterJob,
     QgsPointXY,
+    QgsProject,
     QgsRectangle,
     QgsWkbTypes,
 )
@@ -51,7 +52,6 @@ from .axes_grid import (
     paint_paper_legend,
     snap_world_rect,
 )
-from .crs_util import align_project_to_layer
 
 DARK = '#161411'
 INK = '#fff5e6'
@@ -945,6 +945,8 @@ class ARSYSDock(QMainWindow):
         self._stretch_timer.timeout.connect(self._apply_density_stretch)
         self._dens_stretch_user = False
         self._zoom_windows = {}
+        self._legend_layer = None
+        self._watch_legend_layer()
 
         self.setWindowTitle('ARSYSplotQGIS')
         self.setObjectName('ARSYSplotQGISWindow')
@@ -1461,22 +1463,142 @@ class ARSYSDock(QMainWindow):
             )
         )
 
-    def use_selected_layer(self):
-        layer = self.iface.activeLayer()
+    def _is_user_layer(self, layer):
         if layer is None or not hasattr(layer, 'wkbType'):
-            QMessageBox.warning(self, 'Layer', 'Select a vector point layer.')
+            return False
+        if layer.customProperty('arsysplotqgis'):
+            return False
+        return True
+
+    def _layer_switch_on(self, layer):
+        """Legend checkbox (the eye/switch), not the highlighted row."""
+        if layer is None:
+            return False
+        root = QgsProject.instance().layerTreeRoot()
+        node = root.findLayer(layer.id())
+        if node is None:
+            return True
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            return bool(node.itemVisibilityChecked())
+        return bool(node.isVisible())
+
+    def _visible_user_point_layers(self):
+        out = []
+        root = QgsProject.instance().layerTreeRoot()
+        for node in root.findLayers():
+            lyr = node.layer()
+            if not self._is_user_layer(lyr):
+                continue
+            if not self._layer_switch_on(lyr):
+                continue
+            if QgsWkbTypes.geometryType(lyr.wkbType()) != QgsWkbTypes.PointGeometry:
+                continue
+            out.append(lyr)
+        return out
+
+    def _remember_legend_layer(self, layer):
+        if self._is_user_layer(layer):
+            self._legend_layer = layer
+
+    def _on_legend_selection(self, *_args):
+        view = self.iface.layerTreeView()
+        if view is None:
+            return
+        current = None
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            current = view.currentLayer()
+        if self._is_user_layer(current):
+            self._remember_legend_layer(current)
+            return
+        for lyr in view.selectedLayers() or []:
+            if self._is_user_layer(lyr):
+                self._remember_legend_layer(lyr)
+                return
+
+    def _watch_legend_layer(self):
+        self._remember_legend_layer(self.iface.activeLayer())
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            self.iface.currentLayerChanged.connect(self._remember_legend_layer)
+        view = self.iface.layerTreeView()
+        if view is None:
+            return
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            view.currentLayerChanged.connect(self._remember_legend_layer)
+        sel = view.selectionModel()
+        if sel is not None:
+            sel.selectionChanged.connect(self._on_legend_selection)
+        self._on_legend_selection()
+
+    def _selected_project_layer(self):
+        """Prefer the layer with the legend switch ON, not only the focused row.
+
+        Clicking a layer name (A) leaves it current even if its checkbox is
+        off. Turning B on without clicking the name would otherwise still
+        load A.
+        """
+        view = self.iface.layerTreeView()
+        current = None
+        if view is not None:
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                current = view.currentLayer()
+            if not self._is_user_layer(current):
+                node = view.currentNode()
+                if node is not None and hasattr(node, 'layer'):
+                    current = node.layer()
+        selected = []
+        if view is not None:
+            selected = list(view.selectedLayers() or [])
+        visible = self._visible_user_point_layers()
+        visible_ids = {lyr.id() for lyr in visible}
+
+        def pick(*layers):
+            for lyr in layers:
+                if self._is_user_layer(lyr) and lyr.id() in visible_ids:
+                    return lyr
+            return None
+
+        found = pick(current, *selected, self.iface.activeLayer(), self._legend_layer)
+        if found is not None:
+            return found
+        if len(visible) == 1:
+            return visible[0]
+        if visible:
+            return visible[0]
+        if self._is_user_layer(current):
+            return current
+        if self._is_user_layer(self._legend_layer):
+            return self._legend_layer
+        return None
+
+    def use_selected_layer(self):
+        layer = self._selected_project_layer()
+        if layer is None or not hasattr(layer, 'wkbType'):
+            QMessageBox.warning(
+                self, 'Layer',
+                'Select a point layer in the QGIS layer list, then click '
+                'Use selected layer.',
+            )
             return
         if QgsWkbTypes.geometryType(layer.wkbType()) != QgsWkbTypes.PointGeometry:
             QMessageBox.warning(self, 'Layer', 'Need a point layer.')
             return
-        names = [f.name() for f in layer.fields()]
-        if 'p1x' not in names or 'p1y' not in names:
-            QMessageBox.information(
-                self, 'Layer',
-                'This layer has no p1x/p1y/p1z fields. Sections still use the '
-                'geometry; XYZ sliders need those fields (import a CSV).'
-            )
-        self._attach_source(layer, layer.name())
+        try:
+            clone, skipped = L.clone_as_private_source(layer)
+        except Exception as exc:
+            QMessageBox.warning(self, 'Layer', str(exc))
+            return
+        extra = ' (%d rows skipped)' % skipped if skipped else ''
+        self._attach_source(clone, layer.name())
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            self.iface.setActiveLayer(layer)
+        self._legend_layer = layer
+        self.iface.messageBar().pushInfo(
+            'ARSYSplotQGIS',
+            'Using a private copy of “%s”: %d points%s. '
+            'The project layer is unchanged.' % (
+                layer.name(), clone.featureCount(), extra,
+            ),
+        )
 
     def _drop_plugin_layers(self, keep_source=None):
         self._drop_density_layers()
@@ -1504,8 +1626,7 @@ class ARSYSDock(QMainWindow):
         self.source = layer
         if layer.customProperty('arsysplotqgis') == 'source':
             L.keep_private(layer)
-        align_project_to_layer(layer)
-        self.group_field = 'group' if layer.fields().lookupField('group') >= 0 else layer.fields()[0].name()
+        self.group_field = L.guess_group_field(layer)
         self.long_layer = L.make_section_layer(layer.name() + ' · XZ', layer.crs(), layer.fields())
         self.trans_layer = L.make_section_layer(layer.name() + ' · YZ', layer.crs(), layer.fields())
         self.line_layer = L.make_line_layer(layer.name() + ' · vec', layer.crs(), layer.fields())

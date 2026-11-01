@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from qgis.core import QgsCoordinateReferenceSystem, QgsProject
+from qgis.core import QgsCoordinateReferenceSystem
 
 
 def local_metre_crs():
@@ -27,25 +27,3 @@ def local_metre_crs():
 
 def site_crs():
     return local_metre_crs()
-
-
-def is_web_or_geographic(crs):
-    if crs is None or not crs.isValid():
-        return True
-    if crs.isGeographic():
-        return True
-    auth = (crs.authid() or '').upper()
-    return auth in ('EPSG:3857', 'EPSG:4326', 'EPSG:900913')
-
-
-def align_project_to_layer(layer):
-    """3D uses the project CRS. Local XYZ must not sit at 14 m from Null Island."""
-    if layer is None:
-        return
-    project = QgsProject.instance()
-    if is_web_or_geographic(project.crs()) or is_web_or_geographic(layer.crs()):
-        lcrs = layer.crs() if layer.crs().isValid() else local_metre_crs()
-        if not is_web_or_geographic(lcrs):
-            project.setCrs(lcrs)
-        elif lcrs != local_metre_crs():
-            project.setCrs(local_metre_crs())

@@ -28,6 +28,11 @@ from .colors_util import color_map, qgis_color
 
 GROUP_NAME = 'ARSYSplotQGIS'
 EMPTY_LABEL = '(empty)'
+GROUP_FIELD_HINTS = (
+    'group', 'material', 'nivell', 'level', 'categoria', 'taxo',
+    'grup', 'classe', 'class', 'type', 'tipo',
+)
+MAX_GROUP_CHIPS = 80
 VECTOR_EPS = 1e-4
 ARROW_SLIDER_MAX = 100
 ARROW_MM_MIN = 0.35
@@ -138,6 +143,136 @@ def group_label(value):
     return EMPTY_LABEL if is_empty_group(value) else str(value).strip()
 
 
+def guess_group_field(layer):
+    """Prefer a classification field, not a unique id (that freezes the chips)."""
+    if layer is None:
+        return 'group'
+    names = [f.name() for f in layer.fields()]
+    if not names:
+        return 'group'
+    lower = {n.lower(): n for n in names}
+    for hint in GROUP_FIELD_HINTS:
+        if hint in lower:
+            return lower[hint]
+    nfeat = max(1, int(layer.featureCount() or 0))
+    best = names[0]
+    best_n = nfeat + 1
+    for f in layer.fields():
+        idx = layer.fields().lookupField(f.name())
+        nuniq = nfeat
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            nuniq = len(layer.dataProvider().uniqueValues(idx) or [])
+        if nuniq < best_n and nuniq <= MAX_GROUP_CHIPS:
+            best = f.name()
+            best_n = nuniq
+            if nuniq <= 12:
+                return best
+    return best
+
+
+def clone_as_private_source(layer, name=None):
+    """Copy a project point layer into a private PointZ memory layer.
+
+    The original map layer is not styled, filtered or otherwise changed.
+    P1 is taken from p1x/p1y/p1z when present, otherwise from the geometry.
+    P1/P2/P3 rows are normalised like CSV import.
+    """
+    from .importer import normalize_p123
+
+    if layer is None:
+        raise ValueError('No layer')
+    crs = layer.crs()
+    auth = (crs.authid() or '') if crs is not None and crs.isValid() else ''
+    dest = QgsVectorLayer(
+        'PointZ?crs=%s' % auth if auth else 'PointZ',
+        name or layer.name(),
+        'memory',
+    )
+    if not dest.isValid():
+        dest = QgsVectorLayer('PointZ', name or layer.name(), 'memory')
+    if not dest.isValid():
+        raise ValueError('Could not create a private PointZ copy')
+    if crs is not None and crs.isValid():
+        dest.setCrs(crs)
+    _copy_fields(dest, layer.fields())
+    have = {f.name() for f in dest.fields()}
+    extra = [
+        QgsField(key, QVariant.Double)
+        for key in (
+            'p1x', 'p1y', 'p1z',
+            'p2x', 'p2y', 'p2z',
+            'p3x', 'p3y', 'p3z',
+        )
+        if key not in have
+    ]
+    if extra:
+        dest.dataProvider().addAttributes(extra)
+        dest.updateFields()
+    src_names = {f.name() for f in layer.fields()}
+
+    def cell(feat, key):
+        if key not in src_names:
+            return None
+        return _num(feat[key])
+
+    feats = []
+    skipped = 0
+    for src in layer.getFeatures():
+        geom = src.geometry()
+        x1, y1, z1 = cell(src, 'p1x'), cell(src, 'p1y'), cell(src, 'p1z')
+        x2, y2, z2 = cell(src, 'p2x'), cell(src, 'p2y'), cell(src, 'p2z')
+        x3, y3, z3 = cell(src, 'p3x'), cell(src, 'p3y'), cell(src, 'p3z')
+        if (x1 is None or y1 is None) and geom is not None and not geom.isEmpty():
+            pt = geom.constGet()
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                x1 = float(pt.x()) if x1 is None else x1
+                y1 = float(pt.y()) if y1 is None else y1
+                if z1 is None:
+                    z1 = float(pt.z()) if pt.is3D() else 0.0
+        norm = normalize_p123(x1, y1, z1, x2, y2, z2, x3, y3, z3)
+        if norm is None:
+            skipped += 1
+            continue
+        p1, p2, p3 = norm
+        feat = QgsFeature(dest.fields())
+        feat.setGeometry(QgsGeometry(QgsPoint(p1[0], p1[1], p1[2])))
+        attrs = []
+        for field in dest.fields():
+            key = field.name()
+            if key == 'p1x':
+                attrs.append(p1[0])
+            elif key == 'p1y':
+                attrs.append(p1[1])
+            elif key == 'p1z':
+                attrs.append(p1[2])
+            elif key == 'p2x':
+                attrs.append(None if p2 is None else p2[0])
+            elif key == 'p2y':
+                attrs.append(None if p2 is None else p2[1])
+            elif key == 'p2z':
+                attrs.append(None if p2 is None else p2[2])
+            elif key == 'p3x':
+                attrs.append(None if p3 is None else p3[0])
+            elif key == 'p3y':
+                attrs.append(None if p3 is None else p3[1])
+            elif key == 'p3z':
+                attrs.append(None if p3 is None else p3[2])
+            elif key in src_names:
+                attrs.append(src[key])
+            else:
+                attrs.append(None)
+        feat.setAttributes(attrs)
+        feats.append(feat)
+    if not feats:
+        raise ValueError('No plottable points in the selected layer')
+    dest.dataProvider().addFeatures(feats)
+    dest.updateExtents()
+    dest.setCustomProperty('arsysplotqgis', 'source')
+    dest.setCustomProperty('arsysplotqgis_from', layer.id())
+    dest.setSubsetString('')
+    return dest, skipped
+
+
 def _empty_filter_clause(field):
     f = '"%s"' % field.replace('"', '""')
     return (
@@ -211,6 +346,8 @@ def unique_groups(layer, field='group'):
         seen.add(key)
         out.append(key)
     out.sort(key=lambda s: (s == EMPTY_LABEL, s.lower()))
+    if len(out) > MAX_GROUP_CHIPS:
+        out = out[:MAX_GROUP_CHIPS]
     return out
 
 
