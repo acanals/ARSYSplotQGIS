@@ -1459,7 +1459,9 @@ class ARSYSDock(QMainWindow):
             return
         try:
             layer, skipped = importer.build_pointz_layer(
-                path, 'p1x', 'p1y', 'p1z', 'material'
+                path, 'p1x', 'p1y', 'p1z', 'material',
+                p2x_field='p2x', p2y_field='p2y', p2z_field='p2z',
+                p3x_field='p3x', p3y_field='p3y', p3z_field='p3z',
             )
         except Exception as exc:
             QMessageBox.warning(self, 'Sample', str(exc))
