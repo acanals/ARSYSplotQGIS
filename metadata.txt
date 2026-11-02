@@ -3,7 +3,7 @@ name=ARSYSplotQGIS
 qgisMinimumVersion=3.22
 qgisMaximumVersion=3.99
 description=Archaeostratigraphic workspace for excavation XYZ points: plan, sections, group filters, kernel density, PNG export and 3D
-version=0.2.2
+version=0.2.3
 author=Antoni Canals-Salomó (URV IPHES-CERCA)
 email=archesystem@iphes.cat
 about=ARSYSplotQGIS is a QGIS 3 plugin for archaeostratigraphic reading of excavation point clouds.
@@ -15,7 +15,7 @@ about=ARSYSplotQGIS is a QGIS 3 plugin for archaeostratigraphic reading of excav
     Adaptive frame: Off keeps the full extent; On zooms canvases to the filtered cloud.
     Draw points (P1), vectors, both, or none. Point size and arrow size apply to all views.
     Density: kernel-density heatmap and/or isolines of the filtered points (Quartic, Triangular, Uniform, Triweight, Epanechnikov).
-    Min/Max clip the colour stretch on real KDE values (below Min is not drawn). Auto applies a 2 percent cumulative cut.
+    Min/Max set the colour stretch from the plan peak and apply it to each view’s own peak (plan, X/Z, Y/Z). Below Min is not drawn. Auto uses a 2 percent cut and 100 percent of each local peak.
     Colour palettes, radius, cell size, isoline count, labels and opacity are adjustable. Density stays inside the plugin.
     Each view has a zoom window and PNG export (title, subtitle, background, 96–600 dpi) with metre axes, grid, scale bar and legend.
     3D is a built-in Qt orbit/pan/zoom scatter. It does not use the QGIS 3D engine and needs no extra Python packages.
@@ -34,7 +34,10 @@ deprecated=False
 hasProcessingProvider=False
 server=False
 tags=archaeology,archaeostratigraphy,excavation,stratigraphy,heatmap,kde,isolines,3d,csv,points,sections
-changelog=0.2.2
+changelog=0.2.3
+    - Density Min/Max: one control for plan, X/Z and Y/Z, applied to each view’s own KDE peak (fixes section peak holes)
+    - Density fill stays on the styled KDE raster; isolines are lines only
+    0.2.2
     - Use selected layer: private copy, keep the project CRS, prefer the legend switch ON over the focused row
     0.2.1
     - Clear QGIS plugin security scan (no silent except Exception pass/continue)

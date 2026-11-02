@@ -107,7 +107,7 @@ Imported coordinates are stored in a private **PointZ memory layer**. Additional
 
 Select any point layer already loaded in the QGIS project.
 
-ARSYSplotQGIS copies the required data into its private workspace. The original project layer is never modified.
+ARSYSplotQGIS copies the points, all attributes, and the layer style (classification field, colours, and point size) into its private workspace. The original project layer is never modified.
 
 ### Sample data
 
@@ -170,22 +170,23 @@ Vector display options remain disabled until the imported data contains the requ
 
 ARSYSplotQGIS can generate a kernel-density surface from the **currently filtered points**.
 
-Density calculations use QGIS Processing. The resulting raster and contour lines remain within the plugin workspace and are not added to the QGIS project.
+Density calculations use QGIS Processing (**heatmap KDE**). The fill is the **styled KDE raster** — the same approach as QGIS layer styling — not contour polygons. Isolines are line overlays only. Results stay in the plugin workspace and are not added to the QGIS project.
 
 | Control | Description |
 | --- | --- |
 | **On** | Generate or remove the density surface |
 | **Show** | Display Heatmap, Isolines or Both |
+| **Fill** | **Bands** = discrete colour classes on the raster; **Cloud** = smooth interpolated colour. Same KDE either way. |
 | **Colour** | Select the colour palette (Viridis, Plasma, Magma, Inferno, etc.) |
-| **Min / Max** | Adjust the colour stretch using the actual KDE values. Values below Min are not displayed. |
-| **Auto** | Automatically set Min to the 2% cumulative cut of positive cells and Max to the raster maximum |
+| **Min / Max** | One colour stretch for plan, X/Z and Y/Z. UI values are taken from the plan peak, then applied as **fractions of each view’s own peak** (Auto Max = 100% local peak). Below Min is not painted. |
+| **Auto** | Automatically set Min to the 2% cumulative cut of positive plan cells and Max to the plan peak |
 | **Radius** | Kernel bandwidth, expressed in map units. **Auto** suggests a suitable radius and cell size based on the data extent. |
 | **Cell** | Raster cell size |
 | **Kernel** | Select the kernel function: Quartic, Triangular, Uniform, Triweight or Epanechnikov. Min/Max values are recalculated for each kernel. |
-| **Isolines** | Set the number of contour intervals and optionally enable **Labels**. |
+| **Isolines** | Number of class breaks drawn as contour **lines** (optional **Labels**). |
 | **Opacity** | Control heatmap fill opacity. Empty raster cells remain transparent. |
 
-Plan and section views share the same relative spatial clipping.
+Plan and sections do **not** share absolute KDE units. The Min/Max spinboxes are set from the plan; each view then uses the same relative stretch against **its own** peak (so Auto Max fills the tip on XY, X/Z and Y/Z alike).
 
 For section views, kernel dimensions are adjusted to prevent circular kernels from becoming excessively large along the thinner Z axis.
 

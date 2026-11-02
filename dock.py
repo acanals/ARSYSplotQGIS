@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Lite-style workspace: plan / longitudinal / transversal + filters."""
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 import os
 
 from qgis.core import (
@@ -8,6 +8,7 @@ from qgis.core import (
     QgsPointXY,
     QgsProject,
     QgsRectangle,
+    QgsScopedProxyProgressTask,
     QgsWkbTypes,
 )
 from qgis.gui import QgsMapCanvas
@@ -16,6 +17,7 @@ from qgis.PyQt.QtGui import QBrush, QColor, QIcon, QImage, QPainter, QPen, QFont
 from qgis.PyQt.QtWidgets import (
     QAbstractButton,
     QAbstractSpinBox,
+    QApplication,
     QButtonGroup,
     QComboBox,
     QDoubleSpinBox,
@@ -57,29 +59,61 @@ DARK = '#161411'
 INK = '#fff5e6'
 TOOLTIP_CSS = (
     'QToolTip { background-color:#fff8ee; color:#1a1816;'
-    '  border:1px solid #8a8178; padding:5px 8px; }'
+    '  border:1px solid #8a8178; padding:4px 7px; font-size:10px; }'
 )
 COMPACT_BTN_CSS = (
     'QPushButton { background:#2a2520; color:%s; border:1px solid #3a342e;'
     '  border-radius:6px; font-size:10px; padding:2px 4px; }'
     'QPushButton:hover { background:#3a342e; }'
-    'QPushButton:disabled { color:#6b645c; }'
+    'QPushButton:disabled { color:#6b645c; background:#2a2520; border-color:#3a342e; }'
     'QPushButton:checked { background:#d97726; border-color:#f0a15a; }'
+    'QPushButton:checked:disabled { background:#2a2520; border-color:#3a342e; color:#6b645c; }'
     % INK
 )
 
 
+@contextmanager
+def _qgis_busy(text='ARSYSplotQGIS working'):
+    """QGIS wait cursor and the status-bar task spinner. No extra libraries."""
+    from qgis.utils import OverrideCursor
+    task = None
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        task = QgsScopedProxyProgressTask(text)
+    try:
+        with OverrideCursor(Qt.WaitCursor):
+            QApplication.processEvents()
+            yield
+    finally:
+        task = None
+        QApplication.processEvents()
+
+
+def _tune_auto_btn(btn):
+    """Indicator + action. Must not be the window default (Enter in a spinbox)."""
+    btn.setCheckable(True)
+    btn.setChecked(True)
+    btn.setAutoDefault(False)
+    btn.setDefault(False)
+    btn.setFocusPolicy(Qt.NoFocus)
+    btn.setStyleSheet(COMPACT_BTN_CSS)
+    btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+
+
 def _tune_clip_spin(spn):
-    """Same +/- chrome as Radius/Cell; smaller digits so Min/Max fit one row."""
+    """Same +/- chrome as Radius/Cell; type the full number, apply on commit."""
     spn.setButtonSymbols(QAbstractSpinBox.UpDownArrows)
     spn.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-    spn.setMinimumWidth(70)
+    spn.setMinimumWidth(88)
     spn.setMinimumHeight(26)
+    spn.setDecimals(4)
+    spn.setRange(0.0, 1.0e9)
+    spn.setKeyboardTracking(False)
     spn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
     line = spn.lineEdit()
     if line is not None:
+        line.setMaxLength(16)
         line.setStyleSheet(
-            'QLineEdit { font-size:10px; padding:0px; border:none; background:transparent; }'
+            'QLineEdit { font-size:11px; padding:0px; border:none; background:transparent; }'
         )
 
 
@@ -143,7 +177,22 @@ def _icon_button(filename, tooltip):
     btn.setIconSize(QSize(14, 14))
     btn.setFixedSize(24, 22)
     btn.setCursor(Qt.PointingHandCursor)
-    btn.setToolTip(tooltip)
+    btn.setToolTip(L.html_tooltip(tooltip))
+    return btn
+
+
+def _source_icon_button(filename, tooltip, height):
+    """Icon-only source action; tooltip carries the full name."""
+    btn = QPushButton()
+    btn.setIcon(QIcon(os.path.join(PLUGIN_DIR, filename)))
+    icon = max(12, min(16, int(height) - 8))
+    btn.setIconSize(QSize(icon, icon))
+    btn.setFixedHeight(int(height))
+    btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+    btn.setCursor(Qt.PointingHandCursor)
+    btn.setToolTip(L.html_tooltip(tooltip))
+    btn.setStyleSheet(COMPACT_BTN_CSS)
+    btn.setFocusPolicy(Qt.TabFocus)
     return btn
 
 
@@ -250,8 +299,8 @@ class RangeSliders(QWidget):
         lab.setFixedWidth(16)
         self.v0 = QLabel('—')
         self.v1 = QLabel('—')
-        self.v0.setMinimumWidth(52)
-        self.v1.setMinimumWidth(52)
+        self.v0.setMinimumWidth(64)
+        self.v1.setMinimumWidth(64)
         self.bar = DualRangeBar(self._changed)
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
@@ -262,6 +311,10 @@ class RangeSliders(QWidget):
         row.addWidget(self.v1)
         self.v0.setStyleSheet('color:%s;' % INK)
         self.v1.setStyleSheet('color:%s;' % INK)
+        self.setToolTip(L.html_tooltip(
+            'Keep objects on **%s** in this range.' % axis.upper(),
+            'Unit: **metres (m)**, layer coordinates.',
+        ))
 
     def set_bounds(self, lo, hi):
         self._block = True
@@ -292,8 +345,8 @@ class RangeSliders(QWidget):
 
     def _sync_labels(self):
         a, b = self.values()
-        self.v0.setText('%.3f' % a)
-        self.v1.setText('%.3f' % b)
+        self.v0.setText('%.3f m' % a)
+        self.v1.setText('%.3f m' % b)
 
 
 class PlotCanvas(QgsMapCanvas):
@@ -534,13 +587,15 @@ class PlotPane(QWidget):
         head.setContentsMargins(0, 0, 0, 0)
         head.addWidget(lab, 1)
         self.btn_export = _icon_button(
-            'export.svg', 'Export this view as PNG (with axes)'
+            'export.svg',
+            'Export **PNG** with axes and legend.',
         )
         self.btn_export.setEnabled(False)
         self.btn_export.clicked.connect(self.export_image)
         head.addWidget(self.btn_export)
         self.btn_zoom = _icon_button(
-            'zoom.svg', 'Zoom: open this view in a large window'
+            'zoom.svg',
+            '**Zoom** this view. Wheel, drag, Esc closes.',
         )
         self.btn_zoom.setEnabled(False)
         self.btn_zoom.clicked.connect(self._emit_zoom)
@@ -637,7 +692,6 @@ class PlotPane(QWidget):
         for lyr in layers:
             if lyr.customProperty('arsysplotqgis') == 'density-raster':
                 raster = lyr
-                break
         bar = D.heatmap_legend(raster) if raster is not None else None
         groups, group_field = self.overlay._legend_entries()
         show_groups = bool(groups)
@@ -844,7 +898,9 @@ class ZoomWindow(QMainWindow):
         fit = QPushButton('Fit')
         fit.clicked.connect(self._fit)
         export_btn = QPushButton('Export PNG')
-        export_btn.setToolTip('Export this view as PNG (with axes)')
+        export_btn.setToolTip(L.html_tooltip(
+            'Export **PNG** with axes and legend.',
+        ))
         export_btn.clicked.connect(lambda: self.pane.export_image())
         close_btn = QPushButton('Close')
         close_btn.clicked.connect(self.close)
@@ -926,6 +982,7 @@ class ARSYSDock(QMainWindow):
         self.group_field = 'group'
         self.active_groups = set()
         self.colors = {}
+        self._imported_cmap = {}
         self._filter_timer = QTimer(self)
         self._filter_timer.setSingleShot(True)
         self._filter_timer.timeout.connect(self._apply_filters_now)
@@ -936,7 +993,11 @@ class ARSYSDock(QMainWindow):
         self.density_on = False
         self.density_mode = 'heatmap'
         self.density_fill = 'bands'
-        self._density = {'plan': (None, None), 'long': (None, None), 'trans': (None, None)}
+        self._density = {
+            'plan': (None, None),
+            'long': (None, None),
+            'trans': (None, None),
+        }
         self._density_timer = QTimer(self)
         self._density_timer.setSingleShot(True)
         self._density_timer.timeout.connect(self._rebuild_density)
@@ -944,6 +1005,7 @@ class ARSYSDock(QMainWindow):
         self._stretch_timer.setSingleShot(True)
         self._stretch_timer.timeout.connect(self._apply_density_stretch)
         self._dens_stretch_user = False
+        self._dens_params_user = False
         self._zoom_windows = {}
         self._legend_layer = None
         self._watch_legend_layer()
@@ -989,8 +1051,10 @@ class ARSYSDock(QMainWindow):
             'QSlider::groove:horizontal { background:#2a2520; height:6px; border-radius:3px; }'
             'QSlider::handle:horizontal { background:#d97726; width:12px; margin:-4px 0;'
             '  border-radius:6px; }'
+            'QSlider::groove:horizontal:disabled { background:#2a2520; }'
+            'QSlider::handle:horizontal:disabled { background:#6b645c; }'
             'QToolTip { background-color:#fff8ee; color:#1a1816;'
-            '  border:1px solid #8a8178; padding:5px 8px; }'
+            '  border:1px solid #8a8178; padding:4px 7px; font-size:10px; }'
             % (INK, INK, INK, INK, spin_up, spin_down)
         )
         split = QSplitter(Qt.Horizontal)
@@ -1035,24 +1099,65 @@ class ARSYSDock(QMainWindow):
         col.addWidget(self.lbl_file)
         col.addWidget(self.lbl_count)
 
-        self.btn_import = QPushButton('Import CSV')
+        src_row = QHBoxLayout()
+        src_row.setSpacing(4)
+        src_row.setAlignment(Qt.AlignVCenter)
+        lab_load = QLabel('Load\nData')
+        lab_load.setObjectName('arsysLoadDataLabel')
+        lab_load.setAlignment(Qt.AlignCenter)
+        font = QFont()
+        font.setPixelSize(12)
+        lab_load.setFont(font)
+        lab_load.setAutoFillBackground(False)
+        lab_load.setAttribute(Qt.WA_TranslucentBackground, True)
+        lab_load.setStyleSheet(
+            '#arsysLoadDataLabel { color:%s; background:transparent; border:none;'
+            '  padding:0; margin:0; }' % INK
+        )
+        fm = lab_load.fontMetrics()
+        try:
+            text_w = max(fm.horizontalAdvance('Load'), fm.horizontalAdvance('Data'))
+        except AttributeError:
+            text_w = max(fm.width('Load'), fm.width('Data'))
+        src_h = fm.lineSpacing() * 2
+        lab_load.setFixedSize(QSize(text_w + 6, src_h))
+        src_row.addWidget(lab_load)
+        self.btn_import = _source_icon_button(
+            'import.svg',
+            'Import **CSV**. Map P1, P2, P3 and Group.',
+            src_h,
+        )
         self.btn_import.clicked.connect(self.import_csv)
-        self.btn_sample = QPushButton('Load sample')
-        self.btn_sample.setToolTip('Load the bundled sample.csv (no need to browse).')
+        self.btn_sample = _source_icon_button(
+            'sample.svg',
+            'Load bundled **sample.csv**. No file to browse.',
+            src_h,
+        )
         self.btn_sample.clicked.connect(self.load_sample)
-        self.btn_use = QPushButton('Use selected layer')
+        self.btn_use = _source_icon_button(
+            'layer.svg',
+            'Use the selected QGIS **point layer**. Copies attributes, colours, size.',
+            src_h,
+        )
         self.btn_use.clicked.connect(self.use_selected_layer)
-        col.addWidget(self.btn_import)
-        col.addWidget(self.btn_sample)
-        col.addWidget(self.btn_use)
+        src_row.addWidget(self.btn_import, 1)
+        src_row.addWidget(self.btn_sample, 1)
+        src_row.addWidget(self.btn_use, 1)
+        col.addLayout(src_row)
 
         gbox = QGroupBox('Group')
         gcol = QVBoxLayout(gbox)
         self.cmb_group = QComboBox()
+        self.cmb_group.setToolTip(L.html_tooltip(
+            '**Field** used to colour and filter objects.',
+            'Typical: group, material, level.',
+        ))
         self.cmb_group.currentTextChanged.connect(self._on_group_field)
         row = QHBoxLayout()
         self.btn_all = QPushButton('All')
         self.btn_none = QPushButton('None')
+        self.btn_all.setToolTip(L.html_tooltip('Show **every** group.'))
+        self.btn_none.setToolTip(L.html_tooltip('Hide **every** group.'))
         self.btn_all.clicked.connect(lambda: self._set_all_groups(True))
         self.btn_none.clicked.connect(lambda: self._set_all_groups(False))
         row.addWidget(self.btn_all)
@@ -1077,9 +1182,10 @@ class ARSYSDock(QMainWindow):
         opt = QGroupBox('Options')
         ocol = QVBoxLayout(opt)
         self.chk_adaptive = ToggleSwitch('Adaptive frame')
-        self.chk_adaptive.setToolTip(
-            'Off: keep full extent. On: zoom canvases to the filtered cloud.'
-        )
+        self.chk_adaptive.setToolTip(L.html_tooltip(
+            '**Off:** keep the full extent.',
+            '**On:** zoom to the filtered cloud.',
+        ))
         self.chk_adaptive.toggled.connect(self._refresh_canvases)
         ocol.addWidget(self.chk_adaptive)
         size_row = QHBoxLayout()
@@ -1090,9 +1196,14 @@ class ARSYSDock(QMainWindow):
         self.sld_size.setPageStep(5)
         self.sld_size.setValue(22)
         self.sld_size.setTracking(True)
+        size_tip = L.html_tooltip(
+            'Point diameter. Unit: **mm**. Range **0.8–8.0**.',
+        )
+        self.sld_size.setToolTip(size_tip)
         self.sld_size.valueChanged.connect(self._on_point_size)
-        self.lbl_size = QLabel('2.2')
-        self.lbl_size.setMinimumWidth(28)
+        self.lbl_size = QLabel('2.2 mm')
+        self.lbl_size.setToolTip(size_tip)
+        self.lbl_size.setMinimumWidth(44)
         size_row.addWidget(self.sld_size, 1)
         size_row.addWidget(self.lbl_size)
         ocol.addLayout(size_row)
@@ -1105,12 +1216,14 @@ class ARSYSDock(QMainWindow):
         self.sld_arrow.setValue(L.arrow_slider_from_mm(L.ARROW_MM_DEFAULT))
         self.sld_arrow.setTracking(True)
         self.sld_arrow.setEnabled(False)
-        self.sld_arrow.setToolTip(
-            'Vector arrow head. Fine control at small sizes; the top of the scale stays modest.'
+        arrow_tip = L.html_tooltip(
+            'Arrow-head size. Unit: **mm**. Fine steps at small sizes.',
         )
+        self.sld_arrow.setToolTip(arrow_tip)
         self.sld_arrow.valueChanged.connect(self._on_arrow_size)
-        self.lbl_arrow = QLabel('%.2f' % L.ARROW_MM_DEFAULT)
-        self.lbl_arrow.setMinimumWidth(36)
+        self.lbl_arrow = QLabel('%.2f mm' % L.ARROW_MM_DEFAULT)
+        self.lbl_arrow.setToolTip(arrow_tip)
+        self.lbl_arrow.setMinimumWidth(52)
         arrow_row.addWidget(self.sld_arrow, 1)
         arrow_row.addWidget(self.lbl_arrow)
         ocol.addLayout(arrow_row)
@@ -1132,14 +1245,18 @@ class ARSYSDock(QMainWindow):
             btn.setStyleSheet(COMPACT_BTN_CSS)
             self._draw_group.addButton(btn)
         self.btn_draw_points.setChecked(True)
-        self.btn_draw_points.setToolTip('P1: object centre.')
-        self.btn_draw_vectors.setToolTip(
-            'P2→P3 after import. If a layer still has only P1→P2, that axis is used.'
-        )
-        self.btn_draw_both.setToolTip('Centre point and axis of each object.')
-        self.btn_draw_none.setToolTip(
-            'Hide points and vectors so the density surface is fully visible.'
-        )
+        self.btn_draw_points.setToolTip(L.html_tooltip(
+            '**P1:** object centre.',
+        ))
+        self.btn_draw_vectors.setToolTip(L.html_tooltip(
+            '**P2→P3** after import. If only P1→P2, that axis is used.',
+        ))
+        self.btn_draw_both.setToolTip(L.html_tooltip(
+            '**Centre** and **axis** of each object.',
+        ))
+        self.btn_draw_none.setToolTip(L.html_tooltip(
+            '**Hide** points and vectors so density is fully visible.',
+        ))
         self.btn_draw_vectors.setEnabled(False)
         self.btn_draw_both.setEnabled(False)
         self.btn_draw_points.clicked.connect(lambda: self._set_draw_mode('points'))
@@ -1155,10 +1272,10 @@ class ARSYSDock(QMainWindow):
         dens_box = QGroupBox('Density')
         dcol = QVBoxLayout(dens_box)
         self.chk_density = ToggleSwitch('On')
-        self.chk_density.setToolTip(
-            'Kernel density of the filtered points: heatmap and/or isolines. '
-            'Stays inside the plugin (not on the QGIS map). Use Draw → None to see it alone.'
-        )
+        self.chk_density.setToolTip(L.html_tooltip(
+            '**KDE** of filtered points: heatmap and/or isolines.',
+            'Inside the plugin, not the QGIS map. Draw → **None** to see it alone.',
+        ))
         self.chk_density.toggled.connect(self._on_density_toggled)
         self.chk_density.setEnabled(False)
         dcol.addWidget(self.chk_density)
@@ -1183,10 +1300,37 @@ class ARSYSDock(QMainWindow):
             btn.clicked.connect(lambda _on, m=mode: self._set_density_mode(m))
             dens_mode.addWidget(btn)
         self.btn_dens_heat.setChecked(True)
-        self.btn_dens_heat.setToolTip('Filled density surface (Cloud or Bands).')
-        self.btn_dens_iso.setToolTip('Contour lines of the density surface.')
-        self.btn_dens_both.setToolTip('Heatmap with isolines on top.')
+        self.btn_dens_heat.setToolTip(L.html_tooltip(
+            'Filled density (**Cloud** or **Bands**).',
+        ))
+        self.btn_dens_iso.setToolTip(L.html_tooltip(
+            'Contours of equal **raster-cell** KDE.',
+        ))
+        self.btn_dens_both.setToolTip(L.html_tooltip(
+            '**Heatmap** with isolines on top.',
+        ))
         dcol.addLayout(dens_mode)
+        width_tip = L.html_tooltip(
+            'Isoline stroke. Unit: **mm**. Range **0–1**.',
+        )
+        width_row = QHBoxLayout()
+        lbl_width = QLabel('Line width')
+        lbl_width.setToolTip(width_tip)
+        width_row.addWidget(lbl_width)
+        self.sld_dens_width = QSlider(Qt.Horizontal)
+        self.sld_dens_width.setOrientation(Qt.Horizontal)
+        self.sld_dens_width.setRange(0, 100)
+        self.sld_dens_width.setValue(15)
+        self.sld_dens_width.setMinimumHeight(22)
+        self.sld_dens_width.setEnabled(False)
+        self.sld_dens_width.setToolTip(width_tip)
+        self.sld_dens_width.valueChanged.connect(self._on_density_width)
+        self.lbl_dens_width = QLabel('0.15 mm')
+        self.lbl_dens_width.setMinimumWidth(52)
+        self.lbl_dens_width.setToolTip(width_tip)
+        width_row.addWidget(self.sld_dens_width, 1)
+        width_row.addWidget(self.lbl_dens_width)
+        dcol.addLayout(width_row)
         fill_row = QHBoxLayout()
         fill_row.setSpacing(3)
         fill_row.addWidget(QLabel('Fill'))
@@ -1206,12 +1350,13 @@ class ARSYSDock(QMainWindow):
             btn.clicked.connect(lambda _on, f=fill: self._set_density_fill(f))
             fill_row.addWidget(btn)
         self.btn_dens_bands.setChecked(True)
-        self.btn_dens_cloud.setToolTip(
-            'Continuous interpolated colour (smooth cloud). Same KDE, different paint.'
-        )
-        self.btn_dens_bands.setToolTip(
-            'Discrete hypsometric bands. Class breaks match the isolines.'
-        )
+        self.btn_dens_cloud.setToolTip(L.html_tooltip(
+            '**Cloud:** smooth interpolated colour. Same KDE as Bands.',
+        ))
+        self.btn_dens_bands.setToolTip(L.html_tooltip(
+            '**Bands:** discrete colour classes on the KDE raster (QGIS-style). '
+            'Same breaks as isolines. Isolines are lines only, not the fill.',
+        ))
         dcol.addLayout(fill_row)
         pal_row = QHBoxLayout()
         pal_row.addWidget(QLabel('Colour'))
@@ -1223,20 +1368,20 @@ class ARSYSDock(QMainWindow):
         if idx >= 0:
             self.cmb_dens_scheme.setCurrentIndex(idx)
         self.cmb_dens_scheme.setEnabled(False)
-        self.cmb_dens_scheme.setToolTip(
-            'Colour model of the density surface (heatmap and isolines).'
-        )
+        self.cmb_dens_scheme.setToolTip(L.html_tooltip(
+            '**Colour** of the density surface (heatmap and isolines).',
+        ))
         self.cmb_dens_scheme.currentIndexChanged.connect(self._on_density_scheme)
         pal_row.addWidget(self.cmb_dens_scheme, 1)
         dcol.addLayout(pal_row)
         rng_row = QHBoxLayout()
         rng_row.setSpacing(4)
-        lbl_min = QLabel('Min')
-        lbl_max = QLabel('Max')
-        for lab in (lbl_min, lbl_max):
+        self.lbl_dens_min = QLabel('Min')
+        self.lbl_dens_max = QLabel('Max')
+        for lab in (self.lbl_dens_min, self.lbl_dens_max):
             lab.setStyleSheet('font-size:10px;')
             lab.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        rng_row.addWidget(lbl_min)
+        rng_row.addWidget(self.lbl_dens_min)
         self.spn_dens_min = QDoubleSpinBox()
         self.spn_dens_min.setDecimals(4)
         self.spn_dens_min.setRange(0.0, 1.0e9)
@@ -1244,13 +1389,9 @@ class ARSYSDock(QMainWindow):
         self.spn_dens_min.setValue(0.0)
         self.spn_dens_min.setEnabled(False)
         _tune_clip_spin(self.spn_dens_min)
-        self.spn_dens_min.setToolTip(
-            'Lower bound of the colour stretch (real KDE values). '
-            'Values below Min are not drawn (QGIS clip + additional no-data).'
-        )
         self.spn_dens_min.valueChanged.connect(self._on_density_clip)
         rng_row.addWidget(self.spn_dens_min, 1)
-        rng_row.addWidget(lbl_max)
+        rng_row.addWidget(self.lbl_dens_max)
         self.spn_dens_max = QDoubleSpinBox()
         self.spn_dens_max.setDecimals(4)
         self.spn_dens_max.setRange(0.0, 1.0e9)
@@ -1258,114 +1399,130 @@ class ARSYSDock(QMainWindow):
         self.spn_dens_max.setValue(1.0)
         self.spn_dens_max.setEnabled(False)
         _tune_clip_spin(self.spn_dens_max)
-        self.spn_dens_max.setToolTip(
-            'Upper bound of the colour stretch. Defaults to the raster maximum.'
-        )
         self.spn_dens_max.valueChanged.connect(self._on_density_clip)
+        self._set_clip_tooltips()
         rng_row.addWidget(self.spn_dens_max, 1)
         self.btn_dens_cut = QPushButton('Auto')
-        self.btn_dens_cut.setStyleSheet(COMPACT_BTN_CSS)
-        self.btn_dens_cut.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        _tune_auto_btn(self.btn_dens_cut)
         self.btn_dens_cut.setEnabled(False)
-        self.btn_dens_cut.setToolTip(
-            'QGIS cumulative count cut: Min = 2% of positive cells, Max = raster maximum.'
-        )
+        self.btn_dens_cut.setToolTip(L.html_tooltip(
+            '**On:** Min = 2% of positive plan cells; Max = peak cell.',
+            '**Off:** you set Min/Max. Raster cells, not a point count.',
+        ))
         self.btn_dens_cut.clicked.connect(self._auto_density_stretch)
         rng_row.addWidget(self.btn_dens_cut)
         dcol.addLayout(rng_row)
         rad_row = QHBoxLayout()
-        rad_row.addWidget(QLabel('Radius'))
+        lbl_radius = QLabel('Radius')
+        radius_tip = L.html_tooltip(
+            'Kernel bandwidth. Unit: **metres (m)**. Larger = smoother.',
+        )
+        lbl_radius.setToolTip(radius_tip)
+        rad_row.addWidget(lbl_radius)
         self.spn_dens_radius = QDoubleSpinBox()
         self.spn_dens_radius.setDecimals(2)
         self.spn_dens_radius.setRange(0.05, 80.0)
         self.spn_dens_radius.setSingleStep(0.05)
         self.spn_dens_radius.setValue(0.50)
         self.spn_dens_radius.setSuffix(' m')
+        self.spn_dens_radius.setMinimumWidth(88)
         self.spn_dens_radius.setEnabled(False)
-        self.spn_dens_radius.setToolTip(
-            'Kernel bandwidth in map units. Larger = smoother, broader concentrations.'
-        )
-        self.spn_dens_radius.valueChanged.connect(self._schedule_density)
+        self.spn_dens_radius.setToolTip(radius_tip)
+        self.spn_dens_radius.valueChanged.connect(self._on_density_params)
         rad_row.addWidget(self.spn_dens_radius, 1)
         self.btn_dens_auto = QPushButton('Auto')
+        _tune_auto_btn(self.btn_dens_auto)
         self.btn_dens_auto.setEnabled(False)
-        self.btn_dens_auto.setToolTip('Set radius and cell from the current filtered extent.')
-        self.btn_dens_auto.clicked.connect(lambda: self._auto_density_params(True))
+        self.btn_dens_auto.setToolTip(L.html_tooltip(
+            '**On:** Radius and Cell follow the filtered extent (**m**).',
+            '**Off:** you set them.',
+        ))
+        self.btn_dens_auto.clicked.connect(self._on_radius_auto)
         rad_row.addWidget(self.btn_dens_auto)
         dcol.addLayout(rad_row)
-        cell_row = QHBoxLayout()
-        cell_row.addWidget(QLabel('Cell'))
+        ker_cell = QHBoxLayout()
+        ker_cell.addWidget(QLabel('Kernel'))
+        self.cmb_dens_kernel = QComboBox()
+        for label, val in D.KERNELS:
+            self.cmb_dens_kernel.addItem(label, val)
+        self.cmb_dens_kernel.setEnabled(False)
+        self.cmb_dens_kernel.setToolTip(L.html_tooltip(
+            '**Kernel** shape on the raster: Quartic, Triangular, Uniform, Triweight, Epanechnikov.',
+        ))
+        self.cmb_dens_kernel.currentIndexChanged.connect(self._schedule_density)
+        ker_cell.addWidget(self.cmb_dens_kernel, 1)
+        cell_tip = L.html_tooltip(
+            '**Raster cell** size. Unit: **metres (m)**. Not a point count.',
+            'Smaller = finer grid, slower rebuild.',
+        )
+        lbl_cell = QLabel('Cell')
+        lbl_cell.setToolTip(cell_tip)
+        ker_cell.addWidget(lbl_cell)
         self.spn_dens_cell = QDoubleSpinBox()
         self.spn_dens_cell.setDecimals(3)
         self.spn_dens_cell.setRange(0.005, 20.0)
         self.spn_dens_cell.setSingleStep(0.01)
         self.spn_dens_cell.setValue(0.05)
         self.spn_dens_cell.setSuffix(' m')
+        self.spn_dens_cell.setMinimumWidth(88)
         self.spn_dens_cell.setEnabled(False)
-        self.spn_dens_cell.setToolTip(
-            'Raster cell size used to compute the surface. Display is interpolated '
-            '(smooth density cloud). Smaller = slower to rebuild.'
-        )
-        self.spn_dens_cell.valueChanged.connect(self._schedule_density)
-        cell_row.addWidget(self.spn_dens_cell, 1)
-        dcol.addLayout(cell_row)
-        ker_row = QHBoxLayout()
-        ker_row.addWidget(QLabel('Kernel'))
-        self.cmb_dens_kernel = QComboBox()
-        for label, val in D.KERNELS:
-            self.cmb_dens_kernel.addItem(label, val)
-        self.cmb_dens_kernel.setEnabled(False)
-        self.cmb_dens_kernel.setToolTip(
-            'QGIS KDE shape: Quartic, Triangular, Uniform, Triweight, Epanechnikov.'
-        )
-        self.cmb_dens_kernel.currentIndexChanged.connect(self._schedule_density)
-        ker_row.addWidget(self.cmb_dens_kernel, 1)
-        dcol.addLayout(ker_row)
+        self.spn_dens_cell.setToolTip(cell_tip)
+        self.spn_dens_cell.valueChanged.connect(self._on_density_params)
+        ker_cell.addWidget(self.spn_dens_cell, 1)
+        dcol.addLayout(ker_cell)
         iso_row = QHBoxLayout()
         iso_row.addWidget(QLabel('Isolines'))
         self.spn_dens_levels = QSpinBox()
         self.spn_dens_levels.setRange(3, 16)
         self.spn_dens_levels.setValue(8)
         self.spn_dens_levels.setEnabled(False)
-        self.spn_dens_levels.setToolTip('Number of contour intervals on the density surface.')
+        self.spn_dens_levels.setToolTip(L.html_tooltip(
+            'Contour intervals between **Min** and **Max** cell values.',
+        ))
         self.spn_dens_levels.valueChanged.connect(self._schedule_density_stretch)
         iso_row.addWidget(self.spn_dens_levels, 1)
         self.chk_dens_labels = ToggleSwitch('Labels')
         self.chk_dens_labels.setEnabled(False)
-        self.chk_dens_labels.setToolTip(
-            'Write density values on the isolines.'
-        )
+        self.chk_dens_labels.setToolTip(L.html_tooltip(
+            'Write the **raster-cell** KDE value on each isoline.',
+        ))
         self.chk_dens_labels.toggled.connect(self._on_density_labels)
         iso_row.addWidget(self.chk_dens_labels)
         dcol.addLayout(iso_row)
         op_row = QHBoxLayout()
-        op_row.addWidget(QLabel('Opacity'))
+        op_tip = L.html_tooltip(
+            'Opacity of painted **raster cells**. **100%** = solid; empty stays clear.',
+        )
+        lbl_op = QLabel('Opacity')
+        lbl_op.setToolTip(op_tip)
+        op_row.addWidget(lbl_op)
         self.sld_dens_op = QSlider(Qt.Horizontal)
         self.sld_dens_op.setRange(20, 100)
         self.sld_dens_op.setValue(70)
         self.sld_dens_op.setEnabled(False)
-        self.sld_dens_op.setToolTip(
-            'Fill opacity of the density surface. 100% is a solid colour '
-            '(empty cells stay clear). Lower values make a translucent cloud.'
-        )
+        self.sld_dens_op.setToolTip(op_tip)
         self.sld_dens_op.valueChanged.connect(self._on_density_opacity)
         self.lbl_dens_op = QLabel('70%')
         self.lbl_dens_op.setMinimumWidth(36)
+        self.lbl_dens_op.setToolTip(op_tip)
         op_row.addWidget(self.sld_dens_op, 1)
         op_row.addWidget(self.lbl_dens_op)
         dcol.addLayout(op_row)
         ocol.addWidget(dens_box)
 
         self.btn_reset = QPushButton('Reset')
-        self.btn_reset.setToolTip(
-            'Restore groups, XYZ range, point size, arrow size, zoom and frame to the initial view.'
-        )
+        self.btn_reset.setToolTip(L.html_tooltip(
+            '**Reset** groups, XYZ range, sizes, zoom and frame.',
+        ))
         self.btn_reset.clicked.connect(self.reset_view)
         self.btn_reset.setEnabled(False)
         ocol.addWidget(self.btn_reset)
         col.addWidget(opt)
 
         self.btn_3d = QPushButton('Open 3D view')
+        self.btn_3d.setToolTip(L.html_tooltip(
+            'Orbit the cloud in a separate window. Not QGIS 3D (avoids 3.40 crashes).',
+        ))
         self.btn_3d.clicked.connect(self.open_3d)
         self.btn_3d.setEnabled(False)
         col.addWidget(self.btn_3d)
@@ -1393,7 +1550,9 @@ class ARSYSDock(QMainWindow):
         fl.addWidget(self.rng_y)
         fl.addWidget(self.rng_z)
         btn_reset = QPushButton('Reset')
-        btn_reset.setToolTip('Restore groups, XYZ range, point size, zoom and frame.')
+        btn_reset.setToolTip(L.html_tooltip(
+            '**Reset** groups, XYZ range, sizes, zoom and frame.',
+        ))
         btn_reset.clicked.connect(self.reset_view)
         fl.addWidget(btn_reset)
         fl.addStretch(1)
@@ -1419,20 +1578,21 @@ class ARSYSDock(QMainWindow):
         if not mapping:
             return
         try:
-            layer, skipped = importer.build_pointz_layer(
-                mapping['path'], mapping['x'], mapping['y'], mapping['z'],
-                mapping['group'],
-                p2x_field=mapping.get('p2x') or '',
-                p2y_field=mapping.get('p2y') or '',
-                p2z_field=mapping.get('p2z') or '',
-                p3x_field=mapping.get('p3x') or '',
-                p3y_field=mapping.get('p3y') or '',
-                p3z_field=mapping.get('p3z') or '',
-            )
+            with _qgis_busy('ARSYSplotQGIS: importing CSV'):
+                layer, skipped = importer.build_pointz_layer(
+                    mapping['path'], mapping['x'], mapping['y'], mapping['z'],
+                    mapping['group'],
+                    p2x_field=mapping.get('p2x') or '',
+                    p2y_field=mapping.get('p2y') or '',
+                    p2z_field=mapping.get('p2z') or '',
+                    p3x_field=mapping.get('p3x') or '',
+                    p3y_field=mapping.get('p3y') or '',
+                    p3z_field=mapping.get('p3z') or '',
+                )
+                self._attach_source(layer, os.path.basename(mapping['path']))
         except Exception as exc:
             QMessageBox.warning(self, 'Import', str(exc))
             return
-        self._attach_source(layer, os.path.basename(mapping['path']))
         extra = ' (%d rows skipped)' % skipped if skipped else ''
         self.iface.messageBar().pushInfo('ARSYSplotQGIS', 'Loaded %d points%s.' % (
             layer.featureCount(), extra
@@ -1447,15 +1607,16 @@ class ARSYSDock(QMainWindow):
             )
             return
         try:
-            layer, skipped = importer.build_pointz_layer(
-                path, 'p1x', 'p1y', 'p1z', 'material',
-                p2x_field='p2x', p2y_field='p2y', p2z_field='p2z',
-                p3x_field='p3x', p3y_field='p3y', p3z_field='p3z',
-            )
+            with _qgis_busy('ARSYSplotQGIS: loading sample'):
+                layer, skipped = importer.build_pointz_layer(
+                    path, 'p1x', 'p1y', 'p1z', 'material',
+                    p2x_field='p2x', p2y_field='p2y', p2z_field='p2z',
+                    p3x_field='p3x', p3y_field='p3y', p3z_field='p3z',
+                )
+                self._attach_source(layer, 'sample.csv')
         except Exception as exc:
             QMessageBox.warning(self, 'Sample', str(exc))
             return
-        self._attach_source(layer, 'sample.csv')
         extra = ' (%d rows skipped)' % skipped if skipped else ''
         self.iface.messageBar().pushInfo(
             'ARSYSplotQGIS', 'Loaded sample: %d points%s.' % (
@@ -1583,12 +1744,14 @@ class ARSYSDock(QMainWindow):
             QMessageBox.warning(self, 'Layer', 'Need a point layer.')
             return
         try:
-            clone, skipped = L.clone_as_private_source(layer)
+            with _qgis_busy('ARSYSplotQGIS: reading layer'):
+                style = L.imported_layer_style(layer)
+                clone, skipped = L.clone_as_private_source(layer)
+                extra = ' (%d rows skipped)' % skipped if skipped else ''
+                self._attach_source(clone, layer.name(), style=style)
         except Exception as exc:
             QMessageBox.warning(self, 'Layer', str(exc))
             return
-        extra = ' (%d rows skipped)' % skipped if skipped else ''
-        self._attach_source(clone, layer.name())
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             self.iface.setActiveLayer(layer)
         self._legend_layer = layer
@@ -1620,13 +1783,26 @@ class ARSYSDock(QMainWindow):
         self.long_line_layer = None
         self.trans_line_layer = None
 
-    def _attach_source(self, layer, label):
+    def _attach_source(self, layer, label, style=None):
         self._drop_plugin_layers(keep_source=layer)
         L.clear_plugin_legend()
         self.source = layer
         if layer.customProperty('arsysplotqgis') == 'source':
             L.keep_private(layer)
-        self.group_field = L.guess_group_field(layer)
+        style = style or {}
+        self._imported_cmap = dict(style.get('cmap') or {})
+        if style.get('field'):
+            self.group_field = style['field']
+        else:
+            self.group_field = L.guess_group_field(layer)
+        imported_size = style.get('size')
+        if imported_size:
+            self.point_size = max(0.8, min(8.0, float(imported_size)))
+            slider = max(8, min(80, int(round(self.point_size * 10))))
+            self.sld_size.blockSignals(True)
+            self.sld_size.setValue(slider)
+            self.sld_size.blockSignals(False)
+            self.lbl_size.setText('%.1f mm' % self.point_size)
         self.long_layer = L.make_section_layer(layer.name() + ' · XZ', layer.crs(), layer.fields())
         self.trans_layer = L.make_section_layer(layer.name() + ' · YZ', layer.crs(), layer.fields())
         self.line_layer = L.make_line_layer(layer.name() + ' · vec', layer.crs(), layer.fields())
@@ -1702,15 +1878,17 @@ class ARSYSDock(QMainWindow):
         if not self.source:
             return
         values = L.unique_groups(self.source, self.group_field)
+        imported = getattr(self, '_imported_cmap', None) or {}
         self.colors = L.style_by_group(
-            self.source, self.group_field, size=self.point_size, values=values,
+            self.source, self.group_field, size=self.point_size,
+            values=values, cmap=imported or None,
         )
         self._group_btns = {}
         for i, val in enumerate(values):
             btn = QPushButton(val)
             btn.setCheckable(True)
             btn.setChecked(True)
-            btn.setToolTip(val)
+            btn.setToolTip(L.html_tooltip(val))
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             color = self.colors.get(val, QColor('#888'))
             hexcol = css_hex(color)
@@ -1774,12 +1952,12 @@ class ARSYSDock(QMainWindow):
         self.sld_size.setValue(22)
         self.sld_size.blockSignals(False)
         self.point_size = 2.2
-        self.lbl_size.setText('2.2')
+        self.lbl_size.setText('2.2 mm')
         self.sld_arrow.blockSignals(True)
         self.sld_arrow.setValue(L.arrow_slider_from_mm(L.ARROW_MM_DEFAULT))
         self.sld_arrow.blockSignals(False)
         self.arrow_size = L.ARROW_MM_DEFAULT
-        self.lbl_arrow.setText('%.2f' % self.arrow_size)
+        self.lbl_arrow.setText('%.2f mm' % self.arrow_size)
         self._user_picked_draw = False
         if getattr(self, '_group_btns', None):
             for btn in self._group_btns.values():
@@ -1849,6 +2027,8 @@ class ARSYSDock(QMainWindow):
         total = self.source.dataProvider().featureCount()
         self.lbl_count.setText('%d / %d points · %d vectors' % (vis, total, nvec))
         if self.density_on:
+            if not self._dens_params_user:
+                self._auto_density_params(rebuild=False)
             self._rebuild_density(refresh=False)
         self._refresh_canvases()
         view3d.refresh_open_views(
@@ -1859,7 +2039,7 @@ class ARSYSDock(QMainWindow):
 
     def _on_point_size(self, value):
         self.point_size = int(value) / 10.0
-        self.lbl_size.setText('%.1f' % self.point_size)
+        self.lbl_size.setText('%.1f mm' % self.point_size)
         if self.source is None:
             return
         L.apply_marker_size(self.source, self.point_size)
@@ -1876,7 +2056,7 @@ class ARSYSDock(QMainWindow):
 
     def _on_arrow_size(self, value):
         self.arrow_size = L.arrow_mm_from_slider(value)
-        self.lbl_arrow.setText('%.2f' % self.arrow_size)
+        self.lbl_arrow.setText('%.2f mm' % self.arrow_size)
         if self.line_layer is None:
             return
         L.apply_arrow_size(self.line_layer, self.arrow_size)
@@ -1895,7 +2075,8 @@ class ARSYSDock(QMainWindow):
             self.spn_dens_radius, self.btn_dens_auto, self.spn_dens_cell,
             self.cmb_dens_kernel, self.cmb_dens_scheme,
             self.spn_dens_min, self.spn_dens_max, self.btn_dens_cut,
-            self.spn_dens_levels, self.chk_dens_labels, self.sld_dens_op,
+            self.spn_dens_levels, self.chk_dens_labels,
+            self.sld_dens_width, self.sld_dens_op,
         )
 
     def _sync_density_controls(self):
@@ -1903,14 +2084,18 @@ class ARSYSDock(QMainWindow):
         for w in self._density_widgets():
             w.setEnabled(on)
         if on:
-            iso_on = self.density_mode in ('contours', 'both')
-            self.spn_dens_levels.setEnabled(iso_on)
-            self.chk_dens_labels.setEnabled(iso_on)
+            self.spn_dens_levels.setEnabled(True)
+            self.chk_dens_labels.setEnabled(True)
+            iso_on = self.density_mode in ('contours', 'both') or (
+                self.chk_dens_labels.isChecked()
+            )
+            self.sld_dens_width.setEnabled(iso_on)
             self.sld_dens_op.setEnabled(self.density_mode in ('heatmap', 'both'))
             fill_on = self.density_mode in ('heatmap', 'both')
             self.btn_dens_cloud.setEnabled(fill_on)
             self.btn_dens_bands.setEnabled(fill_on)
             self.cmb_dens_scheme.setEnabled(True)
+        self._sync_auto_buttons()
 
     def _on_density_toggled(self, on):
         self.density_on = bool(on)
@@ -1940,12 +2125,28 @@ class ARSYSDock(QMainWindow):
         if self.density_on:
             self._apply_density_stretch()
 
+    def _sync_auto_buttons(self):
+        pairs = (
+            (self.btn_dens_cut, not self._dens_stretch_user),
+            (self.btn_dens_auto, not self._dens_params_user),
+        )
+        for btn, on in pairs:
+            btn.blockSignals(True)
+            btn.setChecked(on)
+            btn.blockSignals(False)
+
     def _schedule_density(self, *_args):
         if not self.density_on:
             return
-        # New KDE (kernel / radius / cell) → Min/Max must follow the new raster.
-        self._dens_stretch_user = False
         self._density_timer.start(280)
+
+    def _on_density_params(self, *_args):
+        self._dens_params_user = True
+        self._sync_auto_buttons()
+        self._schedule_density()
+
+    def _on_radius_auto(self, *_args):
+        self._auto_density_params(True)
 
     def _auto_density_params(self, rebuild=True):
         if self.source is None:
@@ -1957,6 +2158,8 @@ class ARSYSDock(QMainWindow):
         self.spn_dens_cell.setValue(pixel)
         self.spn_dens_radius.blockSignals(False)
         self.spn_dens_cell.blockSignals(False)
+        self._dens_params_user = False
+        self._sync_auto_buttons()
         if rebuild and self.density_on:
             self._rebuild_density()
 
@@ -1965,20 +2168,35 @@ class ARSYSDock(QMainWindow):
         return sid if sid else D.DEFAULT_SCHEME
 
     def _density_clip(self):
-        return float(self.spn_dens_min.value()), float(self.spn_dens_max.value())
+        mn = float(self.spn_dens_min.value())
+        mx = float(self.spn_dens_max.value())
+        limits = D.raster_limits(self._plan_density_raster())
+        if limits is not None:
+            dmax = float(limits['max'])
+            mn = min(max(0.0, mn), dmax)
+            mx = min(max(mn, mx), dmax)
+            if mx <= mn:
+                mx = dmax
+        return mn, mx
+
+    def _clip_spins_busy(self):
+        return bool(
+            self.spn_dens_min.hasFocus() or self.spn_dens_max.hasFocus()
+        )
 
     def _on_density_clip(self, *_args):
         self._dens_stretch_user = True
+        self._sync_auto_buttons()
         mn = self.spn_dens_min.value()
         mx = self.spn_dens_max.value()
-        if mx <= mn:
+        if mx < mn:
             self.spn_dens_max.blockSignals(True)
             self.spn_dens_max.setValue(mn)
             self.spn_dens_max.blockSignals(False)
         self._schedule_density_stretch()
 
     def _plan_density_raster(self):
-        rst, _ctr = self._density.get('plan', (None, None))
+        rst, _ctr = D.split_pair(self._density.get('plan'))
         return rst
 
     def _first_density_raster(self):
@@ -1986,7 +2204,7 @@ class ARSYSDock(QMainWindow):
         if rst is not None:
             return rst
         for key in ('long', 'trans'):
-            rst, _ctr = self._density.get(key, (None, None))
+            rst, _ctr = D.split_pair(self._density.get(key))
             if rst is not None:
                 return rst
         return None
@@ -2007,57 +2225,83 @@ class ARSYSDock(QMainWindow):
         dmax = float(limits['max'])
         if dmax <= 0:
             return
+        if self._clip_spins_busy() and not reset:
+            return
         if dmax < 1:
-            decimals, step = 4, max(dmax / 200.0, 0.0001)
+            step = max(dmax / 200.0, 0.0001)
         elif dmax < 20:
-            decimals, step = 3, max(dmax / 200.0, 0.001)
+            step = max(dmax / 200.0, 0.001)
         elif dmax < 200:
-            decimals, step = 2, max(dmax / 200.0, 0.01)
+            step = max(dmax / 200.0, 0.01)
         else:
-            decimals, step = 1, max(dmax / 200.0, 0.1)
+            step = max(dmax / 200.0, 0.1)
         apply_auto = reset or not self._dens_stretch_user
         self.spn_dens_min.blockSignals(True)
         self.spn_dens_max.blockSignals(True)
-        ceiling = max(
-            dmax,
-            float(self.spn_dens_min.value() or 0.0),
-            float(self.spn_dens_max.value() or 0.0),
-            1.0,
-        )
         for spn in (self.spn_dens_min, self.spn_dens_max):
-            spn.setRange(0.0, ceiling)
-            spn.setDecimals(decimals)
+            spn.setRange(0.0, 1.0e9)
+            spn.setDecimals(4)
             spn.setSingleStep(step)
         if apply_auto:
             self.spn_dens_min.setValue(float(limits['cut_low']))
             self.spn_dens_max.setValue(dmax)
             self._dens_stretch_user = False
-        else:
-            mn = min(max(0.0, self.spn_dens_min.value()), dmax)
-            mx = min(max(self.spn_dens_max.value(), mn), dmax)
-            if mx <= mn:
-                mx = dmax
-            self.spn_dens_min.setValue(mn)
-            self.spn_dens_max.setValue(mx)
-        for spn in (self.spn_dens_min, self.spn_dens_max):
-            spn.setRange(0.0, dmax)
+            self._sync_auto_buttons()
         self.spn_dens_min.blockSignals(False)
         self.spn_dens_max.blockSignals(False)
-        self.spn_dens_min.setToolTip(
-            'Lower bound of the colour stretch on the plan KDE (max = %.4g). '
-            'Sections use the same relative cut. Values below Min are not drawn.'
-            % dmax
-        )
+        self._set_clip_tooltips(dmax)
 
-    def _auto_density_stretch(self):
+    def _set_clip_tooltips(self, plan_peak=None):
+        """Min/Max are plan-absolute in the UI, applied as peak fractions."""
+        peak = ''
+        if plan_peak is not None and float(plan_peak) > 0:
+            peak = 'Plan **peak cell** is now **%.4g** (reference for all views).' % (
+                float(plan_peak),
+            )
+        min_tip = L.html_tooltip(
+            '**Min** as a fraction of each view’s KDE peak (from the plan value).',
+            'Same control for plan, X/Z and Y/Z. Below Min is not painted.',
+            peak or '**Auto Min** ≈ 2% of positive plan cells.',
+        )
+        max_tip = L.html_tooltip(
+            '**Max** as a fraction of each view’s KDE peak (from the plan value).',
+            '**Auto Max** = 100% of each local peak (no section tip clipped).',
+            peak or 'Lower Max = same % cut on plan, X/Z and Y/Z.',
+        )
+        for widget, tip in (
+            (getattr(self, 'spn_dens_min', None), min_tip),
+            (getattr(self, 'lbl_dens_min', None), min_tip),
+            (getattr(self, 'spn_dens_max', None), max_tip),
+            (getattr(self, 'lbl_dens_max', None), max_tip),
+        ):
+            if widget is not None:
+                widget.setToolTip(tip)
+
+    def _auto_density_stretch(self, *_args):
+        self.btn_dens_cut.blockSignals(True)
+        self.btn_dens_cut.setChecked(True)
+        self.btn_dens_cut.blockSignals(False)
+        self.spn_dens_min.blockSignals(True)
+        self.spn_dens_max.blockSignals(True)
+        self.spn_dens_min.clearFocus()
+        self.spn_dens_max.clearFocus()
+        self.spn_dens_min.blockSignals(False)
+        self.spn_dens_max.blockSignals(False)
         self._dens_stretch_user = False
-        self._sync_density_range(self._first_density_raster(), reset=True)
+        rst = self._first_density_raster()
+        if rst is None:
+            if self.density_on:
+                self._rebuild_density()
+            return
+        self._sync_density_range(rst, reset=True)
         self._apply_density_stretch()
 
     def _schedule_density_stretch(self, *_args):
         if not self.density_on:
             return
-        has_raster = any(rst is not None for rst, _ctr in self._density.values())
+        has_raster = any(
+            D.split_pair(pair)[0] is not None for pair in self._density.values()
+        )
         if has_raster:
             self._stretch_timer.start(160)
         else:
@@ -2072,7 +2316,8 @@ class ARSYSDock(QMainWindow):
         labels = self._density_labels_on()
         mode = self.density_mode
         styled = False
-        for key, (rst, ctr) in list(self._density.items()):
+        for key, pair in list(self._density.items()):
+            rst, ctr = D.split_pair(pair)
             if rst is None:
                 continue
             clip_min, clip_max = self._clip_for_raster(rst)
@@ -2080,6 +2325,7 @@ class ARSYSDock(QMainWindow):
                 rst, ctr, mode, levels, opacity, scheme=scheme,
                 labels=labels, clip_min=clip_min, clip_max=clip_max,
                 fill=self.density_fill,
+                line_width=self._isoline_width(),
             )
             styled = True
         if styled:
@@ -2092,7 +2338,8 @@ class ARSYSDock(QMainWindow):
         opacity = max(0.15, self.sld_dens_op.value() / 100.0)
         with_heat = self.density_mode in ('heatmap', 'both')
         styled = False
-        for rst, ctr in self._density.values():
+        for pair in self._density.values():
+            rst, ctr = D.split_pair(pair)
             if rst is not None:
                 clip_min, clip_max = self._clip_for_raster(rst)
                 D.style_heatmap(
@@ -2106,6 +2353,7 @@ class ARSYSDock(QMainWindow):
                 D.style_contours(
                     ctr, with_heatmap=with_heat, scheme=scheme,
                     labels=self._density_labels_on(),
+                    width=self._isoline_width(),
                 )
                 styled = True
         if styled:
@@ -2118,10 +2366,15 @@ class ARSYSDock(QMainWindow):
         return bool(self.chk_dens_labels.isChecked())
 
     def _on_density_labels(self, *_args):
+        self._sync_density_controls()
         if not self.density_on:
             return
         on = self._density_labels_on()
-        for _rst, ctr in self._density.values():
+        if self.density_mode == 'heatmap':
+            self._apply_density_stretch()
+            return
+        for pair in self._density.values():
+            _rst, ctr = D.split_pair(pair)
             if ctr is not None:
                 D.style_contour_labels(ctr, on=on)
         self.plan.canvas.refresh()
@@ -2129,10 +2382,32 @@ class ARSYSDock(QMainWindow):
         self.transp.canvas.refresh()
         self._refresh_zooms()
 
+    def _isoline_width(self):
+        return max(0.0, min(1.0, int(self.sld_dens_width.value()) / 100.0))
+
+    def _on_density_width(self, value):
+        mm = max(0.0, min(1.0, int(value) / 100.0))
+        self.lbl_dens_width.setText('%.2f mm' % mm)
+        if not self.density_on:
+            return
+        with_heat = self.density_mode in ('heatmap', 'both')
+        styled = False
+        for pair in self._density.values():
+            _rst, ctr = D.split_pair(pair)
+            if ctr is not None:
+                D.style_contours(
+                    ctr, with_heatmap=with_heat, scheme=self._density_scheme(),
+                    labels=self._density_labels_on(), width=mm,
+                )
+                styled = True
+        if styled:
+            self._refresh_canvases()
+
     def _on_density_opacity(self, value):
         self.lbl_dens_op.setText('%d%%' % int(value))
         op = max(0.15, int(value) / 100.0)
-        for rst, _ctr in self._density.values():
+        for pair in self._density.values():
+            rst, _ctr = D.split_pair(pair)
             if rst is not None:
                 rst.setOpacity(op)
                 rst.triggerRepaint()
@@ -2169,21 +2444,23 @@ class ARSYSDock(QMainWindow):
         )
         new_pairs = {}
         try:
-            for key, lyr in jobs:
-                if lyr is None or lyr.featureCount() < 2:
-                    new_pairs[key] = (None, None)
-                    continue
-                rad, pix = D.adapt_kernel(
-                    lyr, radius, pixel,
-                    None if key == 'plan' else self.source,
-                )
-                new_pairs[key] = D.build_pair(
-                    lyr, rad, pix, kernel, mode, levels, opacity,
-                    scheme=self._density_scheme(),
-                    labels=self._density_labels_on(),
-                    clip_min=None, clip_max=None,
-                    fill=self.density_fill,
-                )
+            with _qgis_busy('ARSYSplotQGIS: density'):
+                for key, lyr in jobs:
+                    if lyr is None or lyr.featureCount() < 2:
+                        new_pairs[key] = (None, None)
+                        continue
+                    rad, pix = D.adapt_kernel(
+                        lyr, radius, pixel,
+                        None if key == 'plan' else self.source,
+                    )
+                    new_pairs[key] = D.build_pair(
+                        lyr, rad, pix, kernel, mode, levels, opacity,
+                        scheme=self._density_scheme(),
+                        labels=self._density_labels_on(),
+                        clip_min=None, clip_max=None,
+                        fill=self.density_fill,
+                        line_width=self._isoline_width(),
+                    )
         except Exception as exc:
             self._drop_density_layers()
             QMessageBox.warning(
@@ -2202,8 +2479,7 @@ class ARSYSDock(QMainWindow):
         self._density = new_pairs
         rst = self._first_density_raster()
         if rst is not None:
-            self._dens_stretch_user = False
-            self._sync_density_range(rst, reset=True)
+            self._sync_density_range(rst, reset=not self._dens_stretch_user)
             self._apply_density_stretch()
         elif refresh:
             self._refresh_canvases()
@@ -2247,10 +2523,11 @@ class ARSYSDock(QMainWindow):
             key = 'plan' if pane is self.plan else (
                 'long' if pane is self.longp else 'trans'
             )
-            rst, ctr = self._density.get(key, (None, None))
+            rst, ctr = D.split_pair(self._density.get(key))
+            # QgsMapCanvas: first = topmost. Isolines above KDE raster fill.
             if ctr is not None:
                 out.append(ctr)
-            if rst is not None and self.density_mode in ('heatmap', 'both'):
+            if self.density_mode in ('heatmap', 'both') and rst is not None:
                 out.append(rst)
         return out
 
@@ -2371,9 +2648,10 @@ class ARSYSDock(QMainWindow):
         self._refresh_zooms()
 
     def open_3d(self):
-        view3d.open_3d_view(
-            self.iface, self.source, parent=self,
-            group_field=self.group_field,
-            display_mode=self._draw_mode_for_3d(),
-            arrow_size=self.arrow_size,
-        )
+        with _qgis_busy('ARSYSplotQGIS: 3D view'):
+            view3d.open_3d_view(
+                self.iface, self.source, parent=self,
+                group_field=self.group_field,
+                display_mode=self._draw_mode_for_3d(),
+                arrow_size=self.arrow_size,
+            )

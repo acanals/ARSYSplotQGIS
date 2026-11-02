@@ -1,20 +1,31 @@
 # -*- coding: utf-8 -*-
-"""Kernel density (heatmap + isolines) from the filtered plugin points."""
+"""Kernel density from filtered points.
+
+Fill is always the styled KDE raster (Bands = discrete classes, Cloud =
+smooth), the same model as QGIS layer styling. Isolines are line overlays
+only — never the fill surface.
+"""
 from contextlib import suppress
 import math
 
 from qgis.core import (
+    Qgis,
     QgsClassificationEqualInterval,
     QgsColorRampShader,
+    QgsFeature,
+    QgsGeometry,
     QgsGradientColorRamp,
     QgsGraduatedSymbolRenderer,
     QgsLineSymbol,
     QgsProcessingFeedback,
+    QgsSimpleLineSymbolLayer,
     QgsRasterBandStats,
     QgsRasterLayer,
     QgsRasterShader,
     QgsSingleBandPseudoColorRenderer,
     QgsSingleSymbolRenderer,
+    QgsUnitTypes,
+    QgsVectorLayer,
 )
 from qgis.PyQt.QtCore import QRectF, Qt
 from qgis.PyQt.QtGui import (
@@ -181,8 +192,18 @@ def suggest_params(layer):
     return round(radius, 3), round(pixel, 4)
 
 
+# Cells across the kernel radius. Below this the peak crest is 1–2 px and the
+# last isoline reads as a black hole on longitudinal / transversal views.
+_MIN_RADIUS_CELLS = 12.0
+
+
 def adapt_kernel(layer, radius, pixel, ref_layer=None):
-    """Scale XY radius/cell to a section so the circular kernel is not huge vs Z."""
+    """Scale XY radius/cell to a section so the circular kernel fits the short axis.
+
+    Keeps enough cells across the radius so the density crest stays paintable
+    (see _clamp_pixel). Shrinking radius and then coarsening the grid to the
+    long side was what left a 1–2 cell peak inside the isoline ring.
+    """
     radius = max(0.05, float(radius))
     pixel = max(0.002, float(pixel))
     if layer is None or ref_layer is None or layer is ref_layer:
@@ -198,33 +219,73 @@ def adapt_kernel(layer, radius, pixel, ref_layer=None):
     lay_s = _short(layer)
     if ref_s <= 1e-9 or lay_s <= 1e-9:
         return radius, pixel
-    scale = max(0.12, min(1.0, lay_s / ref_s))
-    return max(0.05, radius * scale), max(0.005, pixel * scale)
+    # Milder floor than 0.12: sections stay smoother; crest keeps width.
+    scale = max(0.22, min(1.0, lay_s / ref_s))
+    radius = max(0.05, radius * scale)
+    # Prefer a finer cell than a mere uniform scale of the plan pixel so the
+    # short axis still resolves the kernel after _clamp_pixel.
+    pixel = min(max(0.002, pixel * scale), max(radius / _MIN_RADIUS_CELLS, 0.002))
+    return radius, pixel
 
 
 def map_clip(user_min, user_max, ref_limits, dest_limits):
-    """Map plan Min/Max onto another view by peak density (sections stack points)."""
+    """Apply one Min/Max control to any density raster via peak fractions.
+
+    The UI values are interpreted relative to the reference peak (plan KDE).
+    On each view (XY, X/Z, Y/Z):
+
+        f_min = user_min / ref_peak
+        f_max = user_max / ref_peak
+        vmin  = f_min * dest_peak
+        vmax  = f_max * dest_peak
+
+    Auto Max on the plan (user_max == ref_peak) therefore opens the peak on
+    every section. Absolute KDE units are not shared across views — only the
+    fraction of each local peak is.
+    """
     if dest_limits is None:
         return user_min, user_max
     dmax = float(dest_limits['max'])
-    if ref_limits is None:
-        return max(0.0, float(user_min)), min(dmax, max(float(user_max), 0.0))
-    rmax = float(ref_limits['max'])
-    if rmax <= 1e-12 or dmax <= 1e-12:
+    if not math.isfinite(dmax) or dmax <= 0.0:
         return user_min, user_max
-    scale = dmax / rmax
-    cmin = max(0.0, float(user_min) * scale)
-    cmax = max(cmin, float(user_max) * scale)
-    return cmin, min(cmax, dmax)
+    umin = max(0.0, float(user_min))
+    umax = max(umin, float(user_max))
+    rmax = None
+    if ref_limits is not None:
+        with suppress(TypeError, ValueError):
+            rmax = float(ref_limits['max'])
+    if rmax is None or not math.isfinite(rmax) or rmax <= 0.0:
+        # No reference peak: treat UI values as absolute on this raster.
+        if umin >= dmax:
+            return 0.0, dmax
+        return umin, min(dmax, umax)
+    fmin = max(0.0, min(1.0, umin / rmax))
+    fmax = max(fmin, min(1.0, umax / rmax))
+    vmin = fmin * dmax
+    vmax = fmax * dmax
+    if vmax <= vmin:
+        return 0.0, dmax
+    return vmin, vmax
 
 
 def _clamp_pixel(layer, radius, pixel):
+    """Bound cell size for performance, but never starve the kernel crest."""
     ext = layer.extent()
     pad = 2.0 * max(radius, 0.0)
-    longest = max(ext.width() + pad, ext.height() + pad, 1.0)
-    # Keep a usable grid, but do not force coarse cells that read as tiles.
+    width = float(ext.width()) + pad
+    height = float(ext.height()) + pad
+    longest = max(width, height, 1.0)
+    radius = max(0.05, float(radius))
+    pixel = max(float(pixel), 0.002)
+    # Performance floor: ~720 cells on the long side.
     min_pixel = longest / 720.0
-    return max(float(pixel), min_pixel, 0.002)
+    pixel = max(pixel, min_pixel)
+    # Crest wins over the 720-cap on elongated sections (X/Z, Y/Z): a coarse
+    # grid makes radius/pixel ≈ 2 and the peak vanishes inside the isoline.
+    max_pixel = radius / _MIN_RADIUS_CELLS
+    if pixel > max_pixel:
+        pixel = max(max_pixel, 0.002)
+    return pixel
 
 
 def _resampling_method(*names):
@@ -268,36 +329,86 @@ def _enable_crisp_resample(rlayer):
                 filt.setMaxOversampling(1.0)
 
 
-def _class_breaks(vmin, vmax, levels):
-    levels = max(3, min(16, int(levels)))
-    span = max(vmax - vmin, 1e-12)
-    interval = span / float(levels)
-    breaks = [vmin + interval * i for i in range(1, levels + 1)]
-    breaks[-1] = vmax
-    return interval, breaks
+def _class_count(levels):
+    try:
+        n = int(levels)
+    except (TypeError, ValueError):
+        n = 8
+    return max(3, min(16, n))
 
 
-def _discrete_ramp_type():
-    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-        return QgsColorRampShader.Discrete
-    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-        from qgis.core import Qgis
-        method = getattr(Qgis, 'ShaderInterpolationMethod', None)
-        if method is not None:
-            return method.Discrete
-    return None
+def _density_spec(vmin, vmax, levels, dmax=None):
+    """Shared class breaks for the KDE raster shader and isoline levels.
+
+    Matches QGIS Layer Styling → Singleband pseudocolor → Discrete →
+    Equal interval → classifyColorRamp(): the last class upper bound is
+    +inf so the peak cell is always coloured. Isolines use the finite
+    class edges only (never a contour at the data peak when Max = peak).
+    """
+    vmin = max(0.0, float(vmin))
+    vmax = max(vmin, float(vmax))
+    n = _class_count(levels)
+    interval = max(vmax - vmin, 1e-12) / float(n)
+    # Finite equal-interval uppers (exclude the open last class at +inf).
+    breaks = [vmin + interval * i for i in range(1, n)]
+    if dmax is None:
+        dmax = vmax
+    else:
+        dmax = float(dmax)
+    # Max counts as "at peak" within half a class (spinbox / float / map_clip).
+    # A stricter 0.99 rule left open_top False with Max slightly under dmax:
+    # transparency then punched ONLY the global tip — secondary peaks looked fine.
+    peak_slop = max(interval * 0.5, abs(dmax) * 1e-4, 1e-9)
+    open_top = (dmax - vmax) <= peak_slop
+    isolines = [float(b) for b in breaks if b > interval * 1e-6]
+    if open_top and isolines:
+        # Drop the boundary of the open last class: that ring frames the hole
+        # when the global tip fails to paint.
+        isolines = isolines[:-1]
+    if not open_top and (not isolines or abs(isolines[-1] - vmax) > interval * 0.05):
+        isolines.append(float(vmax))
+    if not isolines:
+        isolines = [float(vmin + interval)]
+    return {
+        'vmin': vmin,
+        'vmax': vmax,
+        'dmax': dmax,
+        'interval': interval,
+        'levels': n,
+        'breaks': breaks,
+        'isolines': isolines,
+        'open_top': open_top,
+        'paint_max': dmax if open_top else vmax,
+    }
 
 
-def _interpolated_ramp_type():
-    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-        return QgsColorRampShader.Interpolated
-    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-        from qgis.core import Qgis
-        method = getattr(Qgis, 'ShaderInterpolationMethod', None)
-        if method is None:
-            return None
-        return getattr(method, 'Linear', None) or getattr(method, 'Interpolated', None)
-    return None
+def _spec_for_raster(rlayer, clip_min, clip_max, levels):
+    rng = _clip_range(rlayer, clip_min, clip_max)
+    if rng is None:
+        return None
+    limits = raster_limits(rlayer)
+    dmax = float(limits['max']) if limits is not None else rng[1]
+    return _density_spec(rng[0], rng[1], levels, dmax=dmax)
+
+
+def _zero_density_eps(vmin, vmax):
+    """Values at/near 0 are empty KDE, not a class. Relative so sections stay valid."""
+    span = max(abs(float(vmax) - float(vmin)), abs(float(vmax)), 1e-12)
+    return max(span * 1e-6, 1e-12)
+
+
+def _snap_level(val, allowed, tol):
+    best = None
+    best_d = None
+    for item in allowed:
+        try:
+            target = float(item)
+        except (TypeError, ValueError):
+            continue
+        dist = abs(float(val) - target)
+        if dist <= tol and (best_d is None or dist < best_d):
+            best, best_d = target, dist
+    return best
 
 
 def _enable_smooth_resample(rlayer):
@@ -331,6 +442,9 @@ def _enable_smooth_resample(rlayer):
                 filt.setZoomedOutResampler(QgsBilinearRasterResampler())
             if hasattr(filt, 'setMaxOversampling'):
                 filt.setMaxOversampling(24.0)
+
+
+def _run(alg_ids, params):
     processing = _processing()
     feedback = QgsProcessingFeedback()
     last = None
@@ -339,7 +453,6 @@ def _enable_smooth_resample(rlayer):
             return processing.run(alg, params, feedback=feedback)
         except Exception as exc:
             last = exc
-            continue
     if last is not None:
         raise last
     raise RuntimeError('No density algorithm available')
@@ -393,7 +506,8 @@ def build_heatmap(point_layer, radius, pixel, kernel=0):
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         rlayer.reload()
     rlayer.setCustomProperty('arsysplotqgis', 'density-raster')
-    _enable_crisp_resample(rlayer)
+    raster_limits(rlayer)
+    _enable_smooth_resample(rlayer)
     return rlayer
 
 
@@ -413,16 +527,78 @@ def _raster_size(rlayer):
     return w, h
 
 
-def raster_limits(rlayer, lower_frac=0.02):
-    """Real KDE min/max and QGIS-style cumulative count cut of values > 0.
+_LIMITS_KEY = 'arsysplotqgis_limits'
 
-    Returns dict with min, max, cut_low — or None.
-    """
+
+def _store_limits(rlayer, limits):
+    if rlayer is None or not limits:
+        return
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        rlayer.setCustomProperty(_LIMITS_KEY, '%.12g|%.12g|%.12g|%d' % (
+            float(limits['min']),
+            float(limits['max']),
+            float(limits['cut_low']),
+            int(limits.get('n') or 0),
+        ))
+
+
+def _load_limits(rlayer):
+    if rlayer is None:
+        return None
+    raw = None
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        raw = rlayer.customProperty(_LIMITS_KEY)
+    if not raw:
+        return None
+    parts = str(raw).split('|')
+    if len(parts) < 3:
+        return None
+    try:
+        return {
+            'min': float(parts[0]),
+            'max': float(parts[1]),
+            'cut_low': float(parts[2]),
+            'n': int(float(parts[3])) if len(parts) > 3 else 0,
+        }
+    except (TypeError, ValueError):
+        return None
+
+
+def _user_nodata(provider):
+    if provider is None:
+        return []
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        return list(provider.userNoDataValues(1) or [])
+    return []
+
+
+def _set_user_nodata(provider, ranges):
+    if provider is None:
+        return
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        provider.setUserNoDataValue(1, list(ranges or []))
+
+
+def raster_limits(rlayer, lower_frac=0.02):
+    """Raw KDE min/max and 2 percent cut. Cached before any Min clip / no-data."""
+    cached = _load_limits(rlayer)
+    if cached is not None:
+        return cached
+    measured = _measure_raster_limits(rlayer, lower_frac)
+    if measured is not None:
+        _store_limits(rlayer, measured)
+    return measured
+
+
+def _measure_raster_limits(rlayer, lower_frac=0.02):
+    """Read the KDE once, ignoring the current Min no-data mask."""
     if rlayer is None:
         return None
     provider = rlayer.dataProvider()
     if provider is None:
         return None
+    saved = _user_nodata(provider)
+    _set_user_nodata(provider, [])
     w, h = _raster_size(rlayer)
     vmin_pos = None
     vmax = None
@@ -455,91 +631,114 @@ def raster_limits(rlayer, lower_frac=0.02):
                 if idx % stride == 0:
                     samples.append(val)
 
-    if w > 0 and h > 0:
-        rw, rh = w, h
-        ncells = w * h
-        if ncells > 500000:
-            scale = math.sqrt(500000.0 / float(ncells))
-            rw = max(48, int(w * scale))
-            rh = max(48, int(h * scale))
-        try:
-            block = provider.block(1, extent, rw, rh)
-        except Exception:
-            block = None
-        _ingest(block, rh, rw)
-    if vmax is None or not math.isfinite(vmax) or vmax <= 0.0:
-        try:
+    try:
+        stats_max = None
+        stats_min = None
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             stats = provider.bandStatistics(
                 1, QgsRasterBandStats.Min | QgsRasterBandStats.Max,
                 extent, 0,
             )
-            smin = float(stats.minimumValue)
-            smax = float(stats.maximumValue)
-        except Exception:
+            stats_max = float(stats.maximumValue)
+            stats_min = float(stats.minimumValue)
+            if not math.isfinite(stats_max) or stats_max <= 0.0:
+                stats_max = None
+        if w > 0 and h > 0:
+            rw, rh = w, h
+            ncells = w * h
+            if ncells > 500000:
+                scale = math.sqrt(500000.0 / float(ncells))
+                rw = max(48, int(w * scale))
+                rh = max(48, int(h * scale))
+            try:
+                block = provider.block(1, extent, rw, rh)
+            except Exception:
+                block = None
+            _ingest(block, rh, rw)
+        if stats_max is not None:
+            if vmax is None or stats_max > vmax:
+                vmax = stats_max
+            if vmin_pos is None and stats_min is not None and math.isfinite(stats_min) and stats_min > 0.0:
+                vmin_pos = stats_min
+        if vmax is None or vmax <= 0.0:
             return None
-        if not math.isfinite(smax) or smax <= 0.0:
-            return None
-        vmax = smax
-        if vmin_pos is None and math.isfinite(smin) and smin > 0.0:
-            vmin_pos = smin
-    if vmax is None or vmax <= 0.0:
-        return None
-    if vmin_pos is None or vmin_pos < 0.0:
-        vmin_pos = 0.0
-    cut_low = vmin_pos
-    if samples:
-        samples.sort()
-        frac = max(0.0, min(0.49, float(lower_frac)))
-        k = int(round((len(samples) - 1) * frac))
-        cut_low = float(samples[max(0, min(k, len(samples) - 1))])
-        if cut_low >= vmax:
-            cut_low = vmin_pos
-    return {'min': vmin_pos, 'max': vmax, 'cut_low': cut_low, 'n': n_pos}
+        if vmin_pos is None or vmin_pos < 0.0:
+            vmin_pos = 0.0
+        cut_low = vmin_pos
+        if samples:
+            samples.sort()
+            frac = max(0.0, min(0.49, float(lower_frac)))
+            k = int(round((len(samples) - 1) * frac))
+            cut_low = float(samples[max(0, min(k, len(samples) - 1))])
+            if cut_low >= vmax:
+                cut_low = vmin_pos
+        return {'min': vmin_pos, 'max': vmax, 'cut_low': cut_low, 'n': n_pos}
+    finally:
+        _set_user_nodata(provider, saved)
 
 
-def _hide_below(rlayer, renderer, vmin):
-    """QGIS additional no-data + transparency for values below Min (exclusive)."""
-    from qgis.core import QgsRasterRange, QgsRasterTransparency
+def _transparent_range(lo, hi, include_min=True, include_max=False):
+    from qgis.core import QgsRasterTransparency
+    px = QgsRasterTransparency.TransparentSingleValuePixel()
+    if hasattr(px, 'minValue'):
+        px.minValue = float(lo)
+        px.maxValue = float(hi)
+    else:
+        px.min = float(lo)
+        px.max = float(hi)
+    if hasattr(px, 'includeMinimum'):
+        px.includeMinimum = bool(include_min)
+    if hasattr(px, 'includeMaximum'):
+        px.includeMaximum = bool(include_max)
+    px.percentTransparent = 100.0
+    return px
+
+
+def _clear_provider_user_nodata(rlayer):
     provider = rlayer.dataProvider() if rlayer is not None else None
-    lo = max(0.0, float(vmin))
+    if provider is None:
+        return
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-        if provider is None:
-            pass
-        elif lo <= 0.0:
-            provider.setUserNoDataValue(1, [])
-            if hasattr(rlayer, 'resetNoDataValue'):
-                rlayer.resetNoDataValue(1)
-        else:
-            bounds = getattr(QgsRasterRange, 'IncludeMin', None)
-            if bounds is not None:
-                rng = QgsRasterRange(0.0, lo, bounds)
-            else:
-                rng = QgsRasterRange(0.0, max(0.0, lo - 1e-12))
-            provider.setUserNoDataValue(1, [rng])
-            if hasattr(rlayer, 'setNoDataValue'):
-                rlayer.setNoDataValue(1, 0.0)
+        provider.setUserNoDataValue(1, [])
+
+
+def _hide_outside_stretch(renderer, vmin, vmax, open_top):
+    """Hide cells below Min only.
+
+    Never use transparency for "above Max": that punches only the global
+    peak tip and leaves secondary peaks painted (exactly the X/Z symptom).
+    Intentional Max < peak is handled by a finite last class + shader clip.
+    """
+    from qgis.core import QgsRasterTransparency
+    if renderer is None:
+        return
+    lo = max(0.0, float(vmin))
+    pixels = [_transparent_range(0.0, lo, True, False)]
     trans = QgsRasterTransparency()
-    if lo > 0.0:
-        try:
-            px = QgsRasterTransparency.TransparentSingleValuePixel()
-            if hasattr(px, 'minValue'):
-                px.minValue = 0.0
-                px.maxValue = lo
-            else:
-                px.min = 0.0
-                px.max = lo
-            if hasattr(px, 'includeMinimum'):
-                px.includeMinimum = True
-            if hasattr(px, 'includeMaximum'):
-                px.includeMaximum = False
-            px.percentTransparent = 100.0
-            trans.setTransparentSingleValuePixelList([px])
-        except Exception:
-            trans = QgsRasterTransparency()
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        trans.setTransparentSingleValuePixelList(pixels)
+        renderer.setRasterTransparency(trans)
+
+
+def _apply_max_clip(renderer, vmax):
+    """When Max is below the peak: close the last class at Max and clip above."""
     if renderer is None:
         return
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-        renderer.setRasterTransparency(trans)
+        shader = renderer.shader()
+        fn = shader.rasterShaderFunction() if shader is not None else None
+        if fn is None:
+            return
+        items = list(fn.colorRampItemList() or [])
+        if not items:
+            return
+        last = items[-1]
+        items[-1] = QgsColorRampShader.ColorRampItem(
+            float(vmax), last.color, '%.4g' % float(vmax),
+        )
+        fn.setColorRampItemList(items)
+        fn.setClip(True)
+        fn.setMaximumValue(float(vmax))
 
 
 def _clip_range(rlayer, clip_min=None, clip_max=None):
@@ -563,67 +762,149 @@ def _clip_range(rlayer, clip_min=None, clip_max=None):
     return vmin, vmax
 
 
+def _force_open_last_class(renderer):
+    """QGIS Discrete equal-interval uses +inf on the last class; keep it.
+
+    A finite last bound equal to Max is what punches the peak black hole
+    (shade() returns False for any cell above that bound).
+    """
+    if renderer is None:
+        return
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        shader = renderer.shader()
+        fn = shader.rasterShaderFunction() if shader is not None else None
+        if fn is None:
+            return
+        items = list(fn.colorRampItemList() or [])
+        if items and math.isfinite(float(items[-1].value)):
+            last = items[-1]
+            items[-1] = QgsColorRampShader.ColorRampItem(
+                float('inf'), last.color, 'inf',
+            )
+            fn.setColorRampItemList(items)
+        fn.setClip(False)
+
+
 def style_heatmap(rlayer, opacity=0.7, scheme='viridis', levels=8,
                   clip_min=None, clip_max=None, fill='bands'):
-    """Paint the KDE raster. fill: 'bands' (discrete) or 'cloud' (interpolated)."""
+    """Style the KDE raster via QgsSingleBandPseudoColorRenderer.createShader.
+
+    Same path as Layer Properties → Singleband pseudocolor. Bands = Discrete
+    + EqualInterval (last class +inf). Cloud = Linear Continuous. Both use
+    bilinear resampling so thin longitudinal peaks stay visible.
+    """
     if rlayer is None:
         return
-    rng = _clip_range(rlayer, clip_min, clip_max)
-    if rng is None:
+    spec = _spec_for_raster(rlayer, clip_min, clip_max, levels)
+    if spec is None:
+        rlayer.setOpacity(0.0)
+        rlayer.triggerRepaint()
         return
-    vmin, vmax = rng
+    vmin = float(spec['vmin'])
+    vmax = float(spec['vmax'])
+    paint_max = float(spec['paint_max'])
+    open_top = bool(spec['open_top'])
     scheme = resolve_scheme(scheme)
     opacity = max(0.0, min(1.0, float(opacity)))
     fill = 'cloud' if fill == 'cloud' else 'bands'
-    fn = QgsColorRampShader()
-    if fill == 'cloud':
-        items = []
-        for t, r, g, b in scheme_stops(scheme):
-            val = vmin + float(t) * (vmax - vmin)
-            c = QColor(r, g, b)
-            c.setAlpha(255)
-            items.append(QgsColorRampShader.ColorRampItem(val, c, '%.4g' % val))
-        interp = _interpolated_ramp_type()
-        if interp is not None:
-            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-                fn.setColorRampType(interp)
-    else:
-        _interval, breaks = _class_breaks(vmin, vmax, levels)
-        items = []
-        n = len(breaks)
-        for i, upper in enumerate(breaks):
-            t = (i + 0.5) / float(n)
-            c = QColor(color_at(t, scheme))
-            c.setAlpha(255)
-            items.append(QgsColorRampShader.ColorRampItem(upper, c, '%.4g' % upper))
-        discrete = _discrete_ramp_type()
-        if discrete is not None:
-            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-                fn.setColorRampType(discrete)
-    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-        fn.setSourceColorRamp(make_ramp(scheme))
-    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-        fn.setClip(True)
-    fn.setMinimumValue(vmin)
-    fn.setMaximumValue(vmax)
-    fn.setColorRampItemList(items)
-    shader = QgsRasterShader()
-    shader.setRasterShaderFunction(fn)
-    renderer = QgsSingleBandPseudoColorRenderer(rlayer.dataProvider(), 1, shader)
+    levels_n = int(spec['levels'])
+
+    # Drop leftover user-nodata masks from earlier contour runs.
+    _clear_provider_user_nodata(rlayer)
+
+    provider = rlayer.dataProvider()
+    renderer = QgsSingleBandPseudoColorRenderer(provider, 1)
     renderer.setClassificationMin(vmin)
-    renderer.setClassificationMax(vmax)
-    fn.setColorRampItemList(items)
+    renderer.setClassificationMax(paint_max)
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         renderer.setNodataColor(QColor(0, 0, 0, 0))
-    _hide_below(rlayer, renderer, vmin)
-    rlayer.setRenderer(renderer)
+
+    ramp = make_ramp(scheme)
     if fill == 'cloud':
-        _enable_smooth_resample(rlayer)
+        ramp_type = (
+            getattr(Qgis.ShaderInterpolationMethod, 'Linear', None)
+            or Qgis.ShaderInterpolationMethod.Linear
+        )
+        class_mode = Qgis.ShaderClassificationMethod.Continuous
+        n_classes = 0
     else:
-        _enable_crisp_resample(rlayer)
+        ramp_type = Qgis.ShaderInterpolationMethod.Discrete
+        class_mode = Qgis.ShaderClassificationMethod.EqualInterval
+        n_classes = levels_n
+
+    # clip=False always: Discrete last class is +inf; clip is handled by
+    # transparency when Max is below the peak (createShader+clip still paints
+    # above Max when the last bound is +inf).
+    created = False
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        renderer.createShader(
+            ramp, ramp_type, class_mode, n_classes, False,
+        )
+        created = renderer.shader() is not None
+
+    if not created:
+        fn = QgsColorRampShader()
+        if fill == 'cloud':
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                fn.setColorRampType(QgsColorRampShader.Interpolated)
+        else:
+            fn.setColorRampType(QgsColorRampShader.Discrete)
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                fn.setClassificationMode(
+                    QgsColorRampShader.ClassificationMode.EqualInterval,
+                )
+        fn.setMinimumValue(vmin)
+        fn.setMaximumValue(paint_max)
+        fn.setSourceColorRamp(make_ramp(scheme))
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            if fill != 'cloud':
+                fn.classifyColorRamp(levels_n)
+        if fill != 'cloud' and not fn.colorRampItemList():
+            n = levels_n
+            interval = max(paint_max - vmin, 1e-12) / float(n)
+            items = []
+            for i in range(1, n + 1):
+                upper = float('inf') if i == n else (vmin + interval * i)
+                t = (i - 1) / float(n - 1) if n > 1 else 0.5
+                c = QColor(color_at(t, scheme))
+                c.setAlpha(255)
+                items.append(QgsColorRampShader.ColorRampItem(
+                    upper, c, 'inf' if not math.isfinite(upper) else '%.4g' % upper,
+                ))
+            fn.setColorRampItemList(items)
+        fn.setClip(False)
+        shader = QgsRasterShader()
+        shader.setRasterShaderFunction(fn)
+        renderer.setShader(shader)
+
+    if fill != 'cloud':
+        if open_top:
+            _force_open_last_class(renderer)
+        else:
+            # User Max clearly below peak: clip the tip on purpose (all peaks
+            # above Max hide — not via transparency, which only nuked the tip).
+            _apply_max_clip(renderer, vmax)
+    _hide_outside_stretch(renderer, vmin, vmax, open_top)
+    rlayer.setRenderer(renderer)
+    # Bilinear for both fills: nearest makes 1–2-cell longitudinal peaks vanish
+    # inside the last isoline ring (reads as a black hole).
+    _enable_smooth_resample(rlayer)
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         rlayer.setCustomProperty('arsysplotqgis_fill', fill)
         rlayer.setCustomProperty('arsysplotqgis_scheme', scheme)
+        last_v = 'cloud'
+        if fill != 'cloud':
+            try:
+                last_v = str(
+                    renderer.shader().rasterShaderFunction()
+                    .colorRampItemList()[-1].value
+                )
+            except Exception:
+                last_v = '?'
+        rlayer.setCustomProperty('arsysplotqgis_last_class', last_v)
+        rlayer.setCustomProperty(
+            'arsysplotqgis_open_top', '1' if open_top else '0',
+        )
     rlayer.setOpacity(opacity)
     rlayer.triggerRepaint()
 
@@ -631,39 +912,217 @@ def style_heatmap(rlayer, opacity=0.7, scheme='viridis', levels=8,
 def build_contours(rlayer, levels=8, clip_min=None, clip_max=None):
     if rlayer is None:
         return None
-    rng = _clip_range(rlayer, clip_min, clip_max)
-    if rng is None:
+    spec = _spec_for_raster(rlayer, clip_min, clip_max, levels)
+    if spec is None or spec['interval'] <= 0:
         return None
-    vmin, vmax = rng
-    _hide_below(rlayer, None, vmin)
-    interval, breaks = _class_breaks(vmin, vmax, levels)
-    if interval <= 0:
-        return None
+    # Do not alter the display raster's nodata mask for contouring.
     params = {
         'INPUT': rlayer,
         'BAND': 1,
-        'INTERVAL': interval,
+        'INTERVAL': spec['interval'],
         'FIELD_NAME': 'ELEV',
         'CREATE_3D': False,
         'IGNORE_NODATA': True,
-        'OFFSET': vmin if vmin > 1e-9 else breaks[0],
+        'OFFSET': spec['isolines'][0],
         'OUTPUT': 'TEMPORARY_OUTPUT',
     }
     try:
         result = _run(_CONTOUR_IDS, params)
     except Exception:
-        params.pop('OFFSET', None)
         params.pop('IGNORE_NODATA', None)
         result = _run(_CONTOUR_IDS, params)
     path = result.get('OUTPUT')
     if not path:
         return None
-    from qgis.core import QgsVectorLayer
-    layer = QgsVectorLayer(path, rlayer.name() + ' · isolines', 'ogr')
+    layer = path if isinstance(path, QgsVectorLayer) else QgsVectorLayer(
+        str(path), rlayer.name() + ' · isolines', 'ogr',
+    )
     if not layer.isValid() or layer.featureCount() < 1:
         return None
     layer.setCustomProperty('arsysplotqgis', 'density-contour')
+    layer = _merge_connected_isolines(layer)
+    return _keep_contour_levels(layer, spec['isolines'], spec['interval'])
+
+
+
+def _contour_elev_field(layer):
+    if layer is None:
+        return ''
+    if layer.fields().lookupField('ELEV') >= 0:
+        return 'ELEV'
+    if layer.fields().count():
+        return layer.fields()[0].name()
+    return ''
+
+
+def _keep_contour_levels(layer, allowed, interval):
+    """Keep only isolines that match the shared class list."""
+    if layer is None:
+        return None
+    field = _contour_elev_field(layer)
+    if not field:
+        return layer
+    tol = max(float(interval) * 0.02, 1e-9)
+    drop = []
+    for feat in layer.getFeatures():
+        try:
+            val = float(feat[field])
+        except (TypeError, ValueError):
+            drop.append(feat.id())
+            continue
+        if _snap_level(val, allowed, tol) is None:
+            drop.append(feat.id())
+    if drop:
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            layer.dataProvider().deleteFeatures(drop)
+            layer.updateExtents()
+    if layer.featureCount() < 1:
+        return None
+    layer.triggerRepaint()
     return layer
+
+def _line_parts(geom):
+    parts = []
+    if geom is None or geom.isEmpty():
+        return parts
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        if geom.isMultipart():
+            for ring in geom.asMultiPolyline() or []:
+                if ring and len(ring) >= 2:
+                    piece = QgsGeometry.fromPolylineXY(ring)
+                    if piece is not None and not piece.isEmpty():
+                        parts.append(piece)
+            if parts:
+                return parts
+        ring = geom.asPolyline()
+        if ring and len(ring) >= 2:
+            piece = QgsGeometry.fromPolylineXY(ring)
+            if piece is not None and not piece.isEmpty():
+                return [piece]
+    parts.append(QgsGeometry(geom))
+    return parts
+
+
+def _cluster_touching(geoms, eps):
+    n = len(geoms)
+    parent = list(range(n))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            if find(i) == find(j):
+                continue
+            touch = False
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                if geoms[i].intersects(geoms[j]):
+                    touch = True
+                elif geoms[i].distance(geoms[j]) <= eps:
+                    touch = True
+            if touch:
+                union(i, j)
+    groups = {}
+    for i in range(n):
+        groups.setdefault(find(i), []).append(geoms[i])
+    return list(groups.values())
+
+
+def _collect_parts(geoms):
+    if not geoms:
+        return None
+    merged = None
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        merged = QgsGeometry.collectGeometry(geoms)
+    if merged is not None and not merged.isEmpty():
+        return merged
+    merged = geoms[0]
+    for extra in geoms[1:]:
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            combined = merged.combine(extra)
+            if combined is not None and not combined.isEmpty():
+                merged = combined
+    return merged
+
+
+def _merge_connected_isolines(layer):
+    """One feature per continuous isoline: one label per line, not per fragment."""
+    if layer is None:
+        return None
+    field = _contour_elev_field(layer)
+    if not field:
+        return layer
+    grouped = {}
+    for feat in layer.getFeatures():
+        try:
+            val = round(float(feat[field]), 6)
+        except (TypeError, ValueError):
+            continue
+        for piece in _line_parts(feat.geometry()):
+            grouped.setdefault(val, []).append(piece)
+    if not grouped:
+        return layer
+    peak = max(abs(val) for val in grouped) if grouped else 0.0
+    zero_eps = _zero_density_eps(0.0, peak)
+    grouped = {
+        val: geoms for val, geoms in grouped.items() if abs(val) > zero_eps
+    }
+    if not grouped:
+        return None
+    diag = 1.0
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        ext = layer.extent()
+        diag = math.hypot(float(ext.width()), float(ext.height()))
+    eps = max(diag * 0.002, 1e-9)
+    mem = QgsVectorLayer('MultiLineString', layer.name(), 'memory')
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        mem.setCrs(layer.crs())
+    provider = mem.dataProvider()
+    provider.addAttributes(list(layer.fields()))
+    mem.updateFields()
+    i_elev = mem.fields().lookupField(field)
+    extras = []
+    for val, geoms in grouped.items():
+        clusters = _cluster_touching(geoms, eps)
+        for cluster in clusters:
+            geom = _collect_parts(cluster)
+            if geom is None or geom.isEmpty():
+                continue
+            nf = QgsFeature(mem.fields())
+            nf.setGeometry(geom)
+            attrs = [None] * mem.fields().count()
+            if i_elev >= 0:
+                attrs[i_elev] = float(val)
+            nf.setAttributes(attrs)
+            extras.append(nf)
+    if extras:
+        provider.addFeatures(extras)
+        mem.updateExtents()
+    mem.setCustomProperty('arsysplotqgis', 'density-contour')
+    if mem.featureCount() < 1:
+        return layer
+    return mem
+
+
+def _label_placement_line():
+    """QGIS 3.40 moved Line from QgsPalLayerSettings to Qgis.LabelPlacement."""
+    from qgis.core import QgsPalLayerSettings
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        from qgis.core import Qgis
+        return Qgis.LabelPlacement.Line
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        return QgsPalLayerSettings.Line
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        return QgsPalLayerSettings.Placement.Line
+    return None
 
 
 def style_contour_labels(layer, on=False):
@@ -677,12 +1136,11 @@ def style_contour_labels(layer, on=False):
             layer.setLabeling(None)
         layer.triggerRepaint()
         return
-    field = 'ELEV' if layer.fields().lookupField('ELEV') >= 0 else (
-        layer.fields()[0].name() if layer.fields().count() else ''
-    )
+    field = _contour_elev_field(layer)
     if not field:
         return
     from qgis.core import (
+        Qgis,
         QgsPalLayerSettings,
         QgsTextBufferSettings,
         QgsTextFormat,
@@ -690,34 +1148,62 @@ def style_contour_labels(layer, on=False):
         QgsVectorLayerSimpleLabeling,
     )
     settings = QgsPalLayerSettings()
+    settings.fieldName = field
+    settings.isExpression = False
     settings.enabled = True
-    safe = field.replace('"', '')
-    try:
-        settings.fieldName = 'format_number("%s", 2)' % safe
-        settings.isExpression = True
-    except Exception:
-        settings.fieldName = field
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-        placement = getattr(QgsPalLayerSettings, 'Placement', None)
-        settings.placement = placement.Line if placement is not None else QgsPalLayerSettings.Line
+        settings.drawLabels = True
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        settings.formatNumbers = True
+        settings.decimals = 1
+    placement = _label_placement_line()
+    if placement is not None:
+        settings.placement = placement
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        settings.layerType = Qgis.GeometryType.Line
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         settings.mergeLines = True
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-        settings.repeatDistance = 40
-        settings.repeatDistanceUnit = QgsUnitTypes.RenderMillimeters
+        settings.labelPerPart = False
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        settings.repeatDistance = 0
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        settings.priority = 8
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        settings.obstacle = False
+        obs = settings.obstacleSettings()
+        if hasattr(obs, 'setIsObstacle'):
+            obs.setIsObstacle(False)
+        settings.setObstacleSettings(obs)
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        line = settings.lineSettings()
+        flags = None
+        flag_enum = getattr(Qgis, 'LabelLinePlacementFlag', None)
+        if flag_enum is not None:
+            on_line = getattr(flag_enum, 'OnLine', None)
+            map_or = getattr(flag_enum, 'MapOrientation', None)
+            if on_line is not None:
+                flags = on_line
+                if map_or is not None:
+                    flags = flags | map_or
+        if flags is not None and hasattr(line, 'setPlacementFlags'):
+            line.setPlacementFlags(flags)
+        settings.setLineSettings(line)
     fmt = QgsTextFormat()
-    try:
-        fmt.setSize(6.5)
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        fmt.setSize(7.5)
         fmt.setSizeUnit(QgsUnitTypes.RenderPoints)
-    except Exception:
-        fmt.setSize(7)
     fmt.setColor(QColor('#1a1816'))
     buf = QgsTextBufferSettings()
     buf.setEnabled(True)
-    buf.setSize(0.8)
+    buf.setSize(0.22)
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         buf.setSizeUnit(QgsUnitTypes.RenderMillimeters)
-    buf.setColor(QColor('#ffffff'))
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        buf.setFillBufferInterior(False)
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        buf.setOpacity(0.45)
+    buf.setColor(QColor(255, 255, 255, 110))
     fmt.setBuffer(buf)
     settings.setFormat(fmt)
     layer.setLabeling(QgsVectorLayerSimpleLabeling(settings))
@@ -725,18 +1211,41 @@ def style_contour_labels(layer, on=False):
     layer.triggerRepaint()
 
 
-def style_contours(layer, with_heatmap=True, scheme='viridis', labels=False):
+def _line_symbol(color, width):
+    """Opaque millimetre stroke. createSimple drops width; build the layer explicitly."""
+    width = max(0.0, min(1.0, float(width)))
+    color = color if isinstance(color, QColor) else QColor(color)
+    sl = QgsSimpleLineSymbolLayer(color, width)
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        sl.setWidthUnit(QgsUnitTypes.RenderMillimeters)
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        sl.setPenCapStyle(Qt.RoundCap)
+        sl.setPenJoinStyle(Qt.RoundJoin)
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        sl.setPenStyle(Qt.SolidLine)
+    sym = QgsLineSymbol()
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        if not sym.changeSymbolLayer(0, sl):
+            extra = sl.clone() if hasattr(sl, 'clone') else sl
+            sym.appendSymbolLayer(extra)
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        sym.setColor(color)
+        sym.setWidth(width)
+        sym.setWidthUnit(QgsUnitTypes.RenderMillimeters)
+        sym.setOpacity(1.0)
+    return sym
+
+
+def style_contours(layer, with_heatmap=True, scheme='viridis', labels=False,
+                   width=0.15):
     if layer is None:
         return
+    width = max(0.0, min(1.0, float(width)))
     field = 'ELEV' if layer.fields().lookupField('ELEV') >= 0 else (
         layer.fields()[0].name() if layer.fields().count() else ''
     )
     if with_heatmap or not field:
-        layer.setRenderer(QgsSingleSymbolRenderer(QgsLineSymbol.createSimple({
-            'line_color': '#2a2520',
-            'line_width': '0.28',
-            'line_width_unit': 'MM',
-        })))
+        layer.setRenderer(QgsSingleSymbolRenderer(_line_symbol('#000000', width)))
     else:
         ramp = make_ramp(scheme)
         renderer = QgsGraduatedSymbolRenderer(field)
@@ -747,77 +1256,87 @@ def style_contours(layer, with_heatmap=True, scheme='viridis', labels=False):
             for i in range(renderer.rangeCount()):
                 rng = renderer.ranges()[i]
                 color = rng.symbol().color() if rng.symbol() else QColor('#333')
-                renderer.updateRangeSymbol(i, QgsLineSymbol.createSimple({
-                    'line_color': color.name(),
-                    'line_width': '0.45',
-                    'line_width_unit': 'MM',
-                }))
+                renderer.updateRangeSymbol(i, _line_symbol(color, width))
             layer.setRenderer(renderer)
         except Exception:
-            layer.setRenderer(QgsSingleSymbolRenderer(QgsLineSymbol.createSimple({
-                'line_color': '#3d348b',
-                'line_width': '0.5',
-                'line_width_unit': 'MM',
-            })))
+            layer.setRenderer(QgsSingleSymbolRenderer(_line_symbol('#3d348b', width)))
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        layer.setCustomProperty('arsysplotqgis_line_width', '%.3f' % width)
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        layer.setOpacity(1.0)
     style_contour_labels(layer, on=labels)
+
+
+def split_pair(pair):
+    """Return (raster, isolines)."""
+    if not pair:
+        return None, None
+    rst = pair[0] if len(pair) > 0 else None
+    ctr = pair[1] if len(pair) > 1 else None
+    return rst, ctr
+
+
+def _build_isolines(raster, mode, levels, scheme, labels, clip_min, clip_max,
+                    line_width):
+    """Isoline overlay for the current class breaks. Not a fill layer."""
+    need_lines = mode in ('contours', 'both') or bool(labels)
+    if not need_lines:
+        return None
+    contours = build_contours(
+        raster, levels=levels, clip_min=clip_min, clip_max=clip_max,
+    )
+    if contours is None:
+        return None
+    style_contours(
+        contours, with_heatmap=(mode != 'contours'),
+        scheme=scheme, labels=labels, width=line_width,
+    )
+    keep_private(contours)
+    return contours
 
 
 def build_pair(point_layer, radius, pixel, kernel, mode, levels, opacity,
                scheme='viridis', labels=False, clip_min=None, clip_max=None,
-               fill='bands'):
-    """Return (raster, contours) according to mode: heatmap / contours / both."""
+               fill='bands', line_width=0.15):
+    """Return (styled KDE raster, isolines). Fill is never a polygon layer."""
     need_raster = mode in ('heatmap', 'contours', 'both')
-    need_lines = mode in ('contours', 'both')
     raster = build_heatmap(point_layer, radius, pixel, kernel) if need_raster else None
     if raster is None:
         return None, None
     keep_private(raster)
+    fill = 'cloud' if fill == 'cloud' else 'bands'
     if mode in ('heatmap', 'both'):
         style_heatmap(
             raster, opacity=opacity, scheme=scheme, levels=levels,
             clip_min=clip_min, clip_max=clip_max, fill=fill,
         )
-    contours = None
-    if need_lines:
-        contours = build_contours(
-            raster, levels=levels, clip_min=clip_min, clip_max=clip_max,
-        )
-        if contours is not None:
-            style_contours(
-                contours, with_heatmap=(mode == 'both'),
-                scheme=scheme, labels=labels,
-            )
-            keep_private(contours)
+    contours = _build_isolines(
+        raster, mode, levels, scheme, labels, clip_min, clip_max, line_width,
+    )
     return raster, contours
 
 
 def restyle_pair(raster, contours, mode, levels, opacity, scheme='viridis',
-                 labels=False, clip_min=None, clip_max=None, fill='bands'):
-    """Reclassify an existing KDE raster and rebuild isolines. No KDE recompute."""
+                 labels=False, clip_min=None, clip_max=None, fill='bands',
+                 line_width=0.15):
+    """Reclassify the KDE raster and rebuild isolines. No KDE recompute."""
     if raster is None:
         release_private(contours)
         return None, None
+    fill = 'cloud' if fill == 'cloud' else 'bands'
     if mode in ('heatmap', 'both'):
         style_heatmap(
             raster, opacity=opacity, scheme=scheme, levels=levels,
             clip_min=clip_min, clip_max=clip_max, fill=fill,
         )
     release_private(contours)
-    new_ctr = None
-    if mode in ('contours', 'both'):
-        new_ctr = build_contours(
-            raster, levels=levels, clip_min=clip_min, clip_max=clip_max,
-        )
-        if new_ctr is not None:
-            style_contours(
-                new_ctr, with_heatmap=(mode == 'both'),
-                scheme=scheme, labels=labels,
-            )
-            keep_private(new_ctr)
+    new_ctr = _build_isolines(
+        raster, mode, levels, scheme, labels, clip_min, clip_max, line_width,
+    )
     return raster, new_ctr
 
 
-def release_pair(raster, contours):
+def release_pair(raster, contours=None):
     release_private(contours)
     release_private(raster)
 

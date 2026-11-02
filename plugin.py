@@ -7,6 +7,7 @@ from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction
 
 from .dock import ARSYSDock
+from .layers import html_tooltip
 
 PLUGIN_DIR = os.path.dirname(__file__)
 MENU_NAME = 'ARSYSplotQGIS'
@@ -22,9 +23,9 @@ class ARSYSplotQGISPlugin:
     def initGui(self):
         icon = QIcon(os.path.join(PLUGIN_DIR, 'ArcheIcon.png'))
         self.action = QAction(icon, 'ARSYSplotQGIS', self.iface.mainWindow())
-        self.action.setToolTip(
-            'Archaeostratigraphic workspace: plan, sections, density and 3D'
-        )
+        self.action.setToolTip(html_tooltip(
+            '**Plan**, sections, **density** and 3D.',
+        ))
         self.action.setWhatsThis(
             'Plan, longitudinal and transversal views of excavation XYZ points, '
             'with group filters, kernel density and a 3D scatter. '

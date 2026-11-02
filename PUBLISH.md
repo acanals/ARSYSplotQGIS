@@ -8,7 +8,7 @@ Aquest fitxer és per a qui puja el plugin. No va dins del ZIP (`make zip` l’e
 
 | Requeriment | Estat |
 | --- | --- |
-| `metadata.txt` UTF-8: name, version, description, about, author, **email**, qgisMinimumVersion, **repository** | Omplert (0.2.2) |
+| `metadata.txt` UTF-8: name, version, description, about, author, **email**, qgisMinimumVersion, **repository** | Omplert (0.2.3) |
 | `about` i `description` en **anglès**, sense HTML | Sí |
 | `LICENSE` **sense extensió**, GPL-2 o posterior | `LICENSE` = GPL-2.0-or-later |
 | `__init__.py` amb `classFactory` | Sí |
@@ -21,7 +21,7 @@ Aquest fitxer és per a qui puja el plugin. No va dins del ZIP (`make zip` l’e
 | Icona PNG | `ArcheIcon.png` |
 | Menú adequat | Vector (+ toolbar + Help → Plugins) |
 | `experimental=False` (versió estable) | Sí |
-| `changelog` amb el número de versió | 0.2.2 / 0.2.1 / 0.2.0 / 0.1.1 / 0.1.0 |
+| `changelog` amb el número de versió | 0.2.3 / 0.2.2 / 0.2.1 / 0.2.0 / 0.1.1 / 0.1.0 |
 | El ZIP i el GitHub han de ser el **mateix** codi | Comprova abans de pujar |
 
 **Llicència:** QGIS és GPL-2+. CC BY-NC-SA **no** és compatible i el plugin seria rebutjat. Aquest complement és GPL-2.0-or-later. ARSYSplot / ARSYSplotLite al navegador poden continuar amb una altra llicència.
@@ -74,10 +74,10 @@ cd /path/to/ARSYSplotQGIS
 make zip
 ```
 
-Surt `dist/ARSYSplotQGIS.0.2.2.zip`. Comprova:
+Surt `dist/ARSYSplotQGIS.0.2.3.zip`. Comprova:
 
 ```
-ARSYSplotQGIS.0.2.2.zip
+ARSYSplotQGIS.0.2.3.zip
 └── ARSYSplotQGIS/
     ├── metadata.txt
     ├── __init__.py

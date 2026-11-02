@@ -56,7 +56,7 @@
 <p>Kernel density of the <em>filtered</em> points. Stays inside the plugin.</p>
 <ul>
   <li><strong>Show</strong> — Heatmap, Isolines, or Both.</li>
-  <li><strong>Min / Max</strong> — colour stretch on real KDE values. Below Min is not drawn. <strong>Auto</strong> = 2% cut and raster maximum.</li>
+  <li><strong>Min / Max</strong> — one stretch for plan, X/Z and Y/Z. Values come from the plan peak, then apply to each view’s own peak (Auto Max = local peak). Below Min is not drawn.</li>
   <li><strong>Radius / Cell</strong> — bandwidth and cell size. Auto suggests values from the extent.</li>
   <li><strong>Kernel</strong> — Quartic, Triangular, Uniform, Triweight, Epanechnikov. Min/Max update for each kernel.</li>
   <li><strong>Isolines / Labels / Opacity / Colour</strong> — contour count, line labels, fill opacity, palette.</li>

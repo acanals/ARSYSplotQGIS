@@ -46,6 +46,7 @@ from .layers import (
     arrow_px_from_mm,
     arrow_slider_from_mm,
     group_label,
+    html_tooltip,
     vector_endpoints,
 )
 
@@ -456,7 +457,7 @@ class Scatter3DDialog(QDialog):
             'QSlider::handle:horizontal { background:#d97726; width:12px; margin:-4px 0;'
             '  border-radius:6px; }'
             'QToolTip { background-color:#fff8ee; color:#1a1816;'
-            '  border:1px solid #8a8178; padding:5px 8px; }'
+            '  border:1px solid #8a8178; padding:4px 7px; font-size:10px; }'
         )
 
         bar = QHBoxLayout()
@@ -470,11 +471,13 @@ class Scatter3DDialog(QDialog):
         for btn in (self.btn_draw_points, self.btn_draw_vectors, self.btn_draw_both):
             btn.setCheckable(True)
             self._draw_group.addButton(btn)
-        self.btn_draw_points.setToolTip('P1: object centre.')
-        self.btn_draw_vectors.setToolTip(
-            'P2→P3 after import. If a layer still has only P1→P2, that axis is used.'
-        )
-        self.btn_draw_both.setToolTip('Centre point and axis of each object.')
+        self.btn_draw_points.setToolTip(html_tooltip('**P1:** object centre.'))
+        self.btn_draw_vectors.setToolTip(html_tooltip(
+            '**P2→P3** after import. If only P1→P2, that axis is used.',
+        ))
+        self.btn_draw_both.setToolTip(html_tooltip(
+            '**Centre** and **axis** of each object.',
+        ))
         self.btn_draw_vectors.setEnabled(False)
         self.btn_draw_both.setEnabled(False)
         self.btn_draw_points.clicked.connect(lambda: self.set_draw_mode('points'))
@@ -485,8 +488,8 @@ class Scatter3DDialog(QDialog):
         bar.addWidget(self.btn_draw_both)
 
         bar.addWidget(QLabel('Size'))
-        self._size_label = QLabel('%.2f' % SIZE_PX_DEFAULT)
-        self._size_label.setMinimumWidth(32)
+        self._size_label = QLabel('%.2f px' % SIZE_PX_DEFAULT)
+        self._size_label.setMinimumWidth(48)
         slider = QSlider(Qt.Horizontal)
         slider.setRange(0, SIZE_SLIDER_MAX)
         slider.setSingleStep(1)
@@ -494,13 +497,15 @@ class Scatter3DDialog(QDialog):
         slider.setValue(size_slider_from_px(SIZE_PX_DEFAULT))
         slider.setMinimumWidth(56)
         slider.setMaximumWidth(96)
-        slider.setToolTip('Point radius. Fine control below 4; maximum is 10.')
+        slider.setToolTip(html_tooltip(
+            'Point radius. Unit: **px**. Fine below 4; max **10**.',
+        ))
         slider.valueChanged.connect(self._on_size)
         bar.addWidget(slider)
         bar.addWidget(self._size_label)
         bar.addWidget(QLabel('Arrow'))
-        self._arrow_label = QLabel('%.2f' % self._arrow_size)
-        self._arrow_label.setMinimumWidth(32)
+        self._arrow_label = QLabel('%.2f mm' % self._arrow_size)
+        self._arrow_label.setMinimumWidth(48)
         self._arrow_slider = QSlider(Qt.Horizontal)
         self._arrow_slider.setRange(0, ARROW_SLIDER_MAX)
         self._arrow_slider.setSingleStep(1)
@@ -508,6 +513,9 @@ class Scatter3DDialog(QDialog):
         self._arrow_slider.setValue(arrow_slider_from_mm(self._arrow_size))
         self._arrow_slider.setMinimumWidth(56)
         self._arrow_slider.setMaximumWidth(96)
+        self._arrow_slider.setToolTip(html_tooltip(
+            'Arrow-head size. Unit: **mm**.',
+        ))
         self._arrow_slider.valueChanged.connect(self._on_arrow)
         bar.addWidget(self._arrow_slider)
         bar.addWidget(self._arrow_label)
@@ -516,7 +524,9 @@ class Scatter3DDialog(QDialog):
         fit.clicked.connect(self._fit)
         bar.addWidget(fit)
         export_btn = QPushButton('Export PNG')
-        export_btn.setToolTip('Export this 3D view as PNG (with axes)')
+        export_btn.setToolTip(html_tooltip(
+            'Export 3D **PNG** with axes.',
+        ))
         export_btn.clicked.connect(self._export_image)
         bar.addWidget(export_btn)
         close_btn = QPushButton('Close')
@@ -598,7 +608,7 @@ class Scatter3DDialog(QDialog):
             self._arrow_slider.blockSignals(True)
             self._arrow_slider.setValue(arrow_slider_from_mm(self._arrow_size))
             self._arrow_slider.blockSignals(False)
-            self._arrow_label.setText('%.2f' % self._arrow_size)
+            self._arrow_label.setText('%.2f mm' % self._arrow_size)
 
     def reload(self, group_field=None, keep_camera=True, display_mode=None, arrow_size=None):
         if group_field:
@@ -667,12 +677,12 @@ class Scatter3DDialog(QDialog):
 
     def _on_size(self, value):
         radius = size_px_from_slider(value)
-        self._size_label.setText('%.2f' % radius)
+        self._size_label.setText('%.2f px' % radius)
         self.cloud.set_radius(radius)
 
     def _on_arrow(self, value):
         self.set_arrow_size(arrow_mm_from_slider(value), sync_slider=False)
-        self._arrow_label.setText('%.2f' % self._arrow_size)
+        self._arrow_label.setText('%.2f mm' % self._arrow_size)
 
     def _fit(self):
         self.cloud.fit()

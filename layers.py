@@ -26,6 +26,67 @@ from qgis.PyQt.QtGui import QColor
 
 from .colors_util import color_map, qgis_color
 
+def html_tooltip(*parts, width=44):
+    """Compact QToolTip: small type, one line break, **bold** markers."""
+    lines = []
+    for part in parts:
+        if part is None:
+            continue
+        text = ' '.join(str(part).split())
+        if not text:
+            continue
+        for piece in _wrap_tooltip_line(text, width):
+            lines.append(_tooltip_markup(piece))
+    if not lines:
+        return ''
+    return (
+        '<html><body>'
+        '<p style="margin:0; font-size:10px; line-height:1.2;">%s</p>'
+        '</body></html>' % '<br/>'.join(lines)
+    )
+
+
+def _tooltip_markup(text):
+    safe = (
+        text.replace('&', '&amp;')
+        .replace('<', '&lt;')
+        .replace('>', '&gt;')
+        .replace('"', '&quot;')
+    )
+    out = []
+    i = 0
+    while True:
+        a = safe.find('**', i)
+        if a < 0:
+            out.append(safe[i:])
+            break
+        b = safe.find('**', a + 2)
+        if b < 0:
+            out.append(safe[i:])
+            break
+        out.append(safe[i:a])
+        out.append('<b>')
+        out.append(safe[a + 2:b])
+        out.append('</b>')
+        i = b + 2
+    return ''.join(out)
+
+
+def _wrap_tooltip_line(text, width):
+    words = text.split()
+    if not words:
+        return []
+    lines = [words[0]]
+    for word in words[1:]:
+        visible = lines[-1].replace('**', '')
+        extra = word.replace('**', '')
+        if len(visible) + 1 + len(extra) <= width:
+            lines[-1] += ' ' + word
+        else:
+            lines.append(word)
+    return lines
+
+
 GROUP_NAME = 'ARSYSplotQGIS'
 EMPTY_LABEL = '(empty)'
 GROUP_FIELD_HINTS = (
@@ -270,6 +331,10 @@ def clone_as_private_source(layer, name=None):
     dest.setCustomProperty('arsysplotqgis', 'source')
     dest.setCustomProperty('arsysplotqgis_from', layer.id())
     dest.setSubsetString('')
+    rend = layer.renderer()
+    if rend is not None:
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            dest.setRenderer(rend.clone())
     return dest, skipped
 
 
@@ -327,6 +392,118 @@ def clear_plugin_legend(project=None):
 def add_layer_to_group(layer, project=None):
     """Back-compat: keep layers off the main canvas."""
     return keep_private(layer, project)
+
+
+def imported_layer_style(layer):
+    """Classification field, colours and point size from a QGIS layer renderer."""
+    style = {'field': None, 'cmap': {}, 'size': None}
+    if layer is None:
+        return style
+    rend = layer.renderer()
+    if rend is None:
+        return style
+    attr = ''
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        attr = (rend.classAttribute() or '').strip()
+    if attr and layer.fields().lookupField(attr) >= 0:
+        style['field'] = attr
+    elif attr:
+        for field in layer.fields():
+            name = field.name()
+            if '"%s"' % name in attr or name == attr:
+                style['field'] = name
+                break
+    if isinstance(rend, QgsCategorizedSymbolRenderer):
+        for cat in rend.categories():
+            color = _qgs_symbol_color(cat.symbol())
+            if color is None or not color.isValid():
+                continue
+            raw = cat.value()
+            keys = [group_label(raw)]
+            if raw is not None:
+                text = str(raw).strip()
+                if text and text not in keys:
+                    keys.append(text)
+                with suppress(TypeError, ValueError):
+                    num = float(raw)
+                    if num == int(num):
+                        alias = str(int(num))
+                        if alias not in keys:
+                            keys.append(alias)
+            lab = (cat.label() or '').strip()
+            if lab and lab not in keys:
+                keys.append(lab)
+            for key in keys:
+                style['cmap'][key] = QColor(color)
+            if style['size'] is None:
+                style['size'] = _qgs_symbol_size_mm(cat.symbol())
+        return style
+    ranges = None
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        ranges = list(rend.ranges())
+    if ranges:
+        for rng in ranges:
+            color = _qgs_symbol_color(rng.symbol())
+            if color is None or not color.isValid():
+                continue
+            lab = ''
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                lab = (rng.label() or '').strip()
+            if lab:
+                style['cmap'][lab] = QColor(color)
+            if style['size'] is None:
+                style['size'] = _qgs_symbol_size_mm(rng.symbol())
+        if style['field']:
+            idx = layer.fields().lookupField(style['field'])
+            nuniq = MAX_GROUP_CHIPS + 1
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                nuniq = len(layer.dataProvider().uniqueValues(idx) or [])
+            if nuniq > MAX_GROUP_CHIPS:
+                style['field'] = None
+        return style
+    root = None
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        root = rend.rootRule()
+    if root is not None:
+        _collect_rule_style(root, style)
+        return style
+    sym = None
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        sym = rend.symbol()
+    color = _qgs_symbol_color(sym)
+    if color is not None and color.isValid():
+        style['cmap']['__default__'] = QColor(color)
+    if style['size'] is None:
+        style['size'] = _qgs_symbol_size_mm(sym)
+    return style
+
+
+def _collect_rule_style(rule, style):
+    if rule is None:
+        return
+    active = True
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        active = bool(rule.active())
+    if active:
+        sym = None
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            sym = rule.symbol()
+        color = _qgs_symbol_color(sym)
+        lab = ''
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            lab = (rule.label() or '').strip()
+        if not lab:
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                lab = (rule.filterExpression() or '').strip()
+        if color is not None and color.isValid() and lab:
+            style['cmap'][lab] = QColor(color)
+        if style['size'] is None:
+            style['size'] = _qgs_symbol_size_mm(sym)
+    children = []
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        children = list(rule.children() or [])
+    for child in children:
+        _collect_rule_style(child, style)
 
 
 def unique_groups(layer, field='group'):
@@ -399,9 +576,9 @@ def _marker(color, size):
 
 def style_by_group(layer, field='group', size=2.2, cmap=None, values=None):
     if layer is None:
-        return cmap or {}
+        return color_map(values or [], base=cmap)
     values = list(values) if values is not None else unique_groups(layer, field)
-    cmap = dict(cmap) if cmap else color_map(values)
+    cmap = color_map(values, base=cmap)
     size = max(0.4, float(size))
     cats = []
     for val in values:
@@ -452,6 +629,37 @@ def _arrow_marker(color, head_mm):
     })
     _apply_symbol_color(sym, c)
     return sym
+
+
+def _qgs_symbol_color(sym):
+    if sym is None:
+        return QColor()
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        c = sym.color()
+        if c is not None and c.isValid():
+            return QColor(c)
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        if sym.symbolLayerCount() > 0:
+            return _symbol_color(sym.symbolLayer(0))
+    return QColor()
+
+
+def _qgs_symbol_size_mm(sym):
+    if sym is None:
+        return None
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        if hasattr(sym, 'size'):
+            size = float(sym.size())
+            if size > 0:
+                return size
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        if sym.symbolLayerCount() > 0:
+            sl = sym.symbolLayer(0)
+            if sl is not None and hasattr(sl, 'size'):
+                size = float(sl.size())
+                if size > 0:
+                    return size
+    return None
 
 
 def _symbol_color(lyr):
@@ -533,9 +741,9 @@ def _scale_line_symbol(sym, width_mm=None, head_mm=None):
 
 def style_lines_by_group(layer, field='group', width=0.6, head=None, values=None, cmap=None):
     if layer is None:
-        return {}
+        return color_map(values or [], base=cmap)
     values = list(values) if values is not None else unique_groups(layer, field)
-    cmap = dict(cmap) if cmap else color_map(values)
+    cmap = color_map(values, base=cmap)
     width = max(0.2, float(width))
     head = max(ARROW_MM_MIN, float(ARROW_MM_DEFAULT if head is None else head))
     cats = []

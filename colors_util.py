@@ -8,11 +8,26 @@ def color_for_index(i, n):
     return QColor.fromHsvF(h, 0.62, 0.88)
 
 
-def color_map(values):
+def color_map(values, base=None):
     values = list(values)
     out = {}
-    for i, val in enumerate(values):
-        out[val] = color_for_index(i, len(values))
+    default = None
+    if base:
+        for key, color in base.items():
+            if key == '__default__':
+                default = color if isinstance(color, QColor) else QColor(color)
+                continue
+            out[key] = color if isinstance(color, QColor) else QColor(color)
+    n = max(len(values), 1)
+    i = 0
+    for val in values:
+        if val in out and out[val] is not None and out[val].isValid():
+            continue
+        if default is not None and default.isValid():
+            out[val] = QColor(default)
+        else:
+            out[val] = color_for_index(i, n)
+            i += 1
     return out
 
 

@@ -25,6 +25,7 @@ from qgis.PyQt.QtWidgets import (
 )
 
 from .crs_util import site_crs
+from .layers import html_tooltip
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 SAMPLE_CSV = os.path.join(PLUGIN_DIR, 'sample.csv')
@@ -379,7 +380,9 @@ class ImportCsvDialog(QDialog):
         btn_open = buttons.addButton('Choose file…', QDialogButtonBox.ActionRole)
         btn_open.clicked.connect(self._choose)
         btn_sample = buttons.addButton('Sample data', QDialogButtonBox.ActionRole)
-        btn_sample.setToolTip('Load the bundled sample.csv (works after ZIP or repository install).')
+        btn_sample.setToolTip(html_tooltip(
+            'Load bundled **sample.csv**. Works from ZIP or repository.',
+        ))
         btn_sample.clicked.connect(self._use_sample)
         buttons.accepted.connect(self._ok)
         buttons.rejected.connect(self.reject)
