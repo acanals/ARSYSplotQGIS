@@ -21,7 +21,7 @@ from qgis.core import (
     QgsVectorLayer,
     QgsWkbTypes,
 )
-from qgis.PyQt.QtCore import QVariant
+from qgis.PyQt.QtCore import QVariant, Qt
 from qgis.PyQt.QtGui import QColor
 
 from .colors_util import color_map, qgis_color
@@ -231,12 +231,49 @@ def guess_group_field(layer):
     return best
 
 
+def _match_field_name(names, hints):
+    """Pick a field by exact then substring hint (case-insensitive)."""
+    lower_map = {str(n).lower().strip(): n for n in names}
+    for hint in hints:
+        if hint in lower_map:
+            return lower_map[hint]
+    for hint in hints:
+        if len(hint) < 2:
+            continue
+        for low, orig in lower_map.items():
+            if hint in low:
+                return orig
+    return None
+
+
+def resolve_xyz_field_map(layer):
+    """Map canonical p1x…p3z keys to actual layer field names (CSV-style hints)."""
+    from .importer import (
+        P2X_HINTS, P2Y_HINTS, P2Z_HINTS,
+        P3X_HINTS, P3Y_HINTS, P3Z_HINTS,
+        X_HINTS, Y_HINTS, Z_HINTS,
+    )
+    names = [f.name() for f in layer.fields()] if layer is not None else []
+    return {
+        'p1x': _match_field_name(names, X_HINTS),
+        'p1y': _match_field_name(names, Y_HINTS),
+        'p1z': _match_field_name(names, Z_HINTS),
+        'p2x': _match_field_name(names, P2X_HINTS),
+        'p2y': _match_field_name(names, P2Y_HINTS),
+        'p2z': _match_field_name(names, P2Z_HINTS),
+        'p3x': _match_field_name(names, P3X_HINTS),
+        'p3y': _match_field_name(names, P3Y_HINTS),
+        'p3z': _match_field_name(names, P3Z_HINTS),
+    }
+
+
 def clone_as_private_source(layer, name=None):
     """Copy a project point layer into a private PointZ memory layer.
 
     The original map layer is not styled, filtered or otherwise changed.
-    P1 is taken from p1x/p1y/p1z when present, otherwise from the geometry.
-    P1/P2/P3 rows are normalised like CSV import.
+    P1 is taken from coordinate fields (same hints as CSV import) when present,
+    otherwise from the geometry. P2/P3 vector ends are detected the same way
+    (``p2x``/``x2``, ``p3x``/``x3``, …) and normalised like CSV import.
     """
     from .importer import normalize_p123
 
@@ -270,14 +307,18 @@ def clone_as_private_source(layer, name=None):
         dest.dataProvider().addAttributes(extra)
         dest.updateFields()
     src_names = {f.name() for f in layer.fields()}
+    fmap = resolve_xyz_field_map(layer)
 
-    def cell(feat, key):
-        if key not in src_names:
+    def cell(feat, canon):
+        """Read a coordinate by canonical key via resolved source field name."""
+        src_key = fmap.get(canon)
+        if not src_key or src_key not in src_names:
             return None
-        return _num(feat[key])
+        return _num(feat[src_key])
 
     feats = []
     skipped = 0
+    n_vectors = 0
     for src in layer.getFeatures():
         geom = src.geometry()
         x1, y1, z1 = cell(src, 'p1x'), cell(src, 'p1y'), cell(src, 'p1z')
@@ -295,6 +336,11 @@ def clone_as_private_source(layer, name=None):
             skipped += 1
             continue
         p1, p2, p3 = norm
+        if p2 is not None and p3 is not None:
+            n_vectors += 1
+        elif p2 is not None:
+            # Legacy P1→P2 axis still counts as a drawable vector.
+            n_vectors += 1
         feat = QgsFeature(dest.fields())
         feat.setGeometry(QgsGeometry(QgsPoint(p1[0], p1[1], p1[2])))
         attrs = []
@@ -330,6 +376,7 @@ def clone_as_private_source(layer, name=None):
     dest.updateExtents()
     dest.setCustomProperty('arsysplotqgis', 'source')
     dest.setCustomProperty('arsysplotqgis_from', layer.id())
+    dest.setCustomProperty('arsysplotqgis_vectors', str(int(n_vectors)))
     dest.setSubsetString('')
     rend = layer.renderer()
     if rend is not None:
@@ -542,10 +589,144 @@ def group_class_attr(field):
     )
 
 
-def _apply_symbol_color(sym, color):
+# QGIS simple-marker names → UI label.
+MARKER_SHAPES = (
+    ('circle', 'Circle'),
+    ('square', 'Square'),
+    ('diamond', 'Diamond'),
+    ('triangle', 'Triangle'),
+    ('equilateral_triangle', 'Equilateral triangle'),
+    ('pentagon', 'Pentagon'),
+    ('hexagon', 'Hexagon'),
+    ('octagon', 'Octagon'),
+    ('star', 'Star'),
+    ('cross', 'Cross'),
+    ('cross2', 'X'),
+)
+DEFAULT_MARKER = 'circle'
+_MARKER_IDS = {sid for sid, _lab in MARKER_SHAPES}
+# Stroke-only QGIS markers (no fill) — colour must go on the outline.
+_LINE_MARKERS = frozenset({'cross', 'cross2'})
+# Dark rim eats triangle/star tips below this diameter (mm).
+_OUTLINE_SIZE_FLOOR = 2.2
+
+
+def resolve_marker_shape(name):
+    if name in _MARKER_IDS:
+        return name
+    return DEFAULT_MARKER
+
+
+def _filled_outline_mm(size_mm):
+    """Dark outline width for filled markers; 0 when too small to stay crisp."""
+    size_mm = max(0.0, float(size_mm))
+    if size_mm < _OUTLINE_SIZE_FLOOR:
+        return 0.0
+    return min(0.18, size_mm * 0.07)
+
+
+def _line_stroke_mm(size_mm):
+    """Stroke width for Cross / X — scale with size, never dominate the glyph."""
+    size_mm = max(0.0, float(size_mm))
+    if size_mm <= 0.05:
+        return 0.20
+    # Keep a visible hairline; old floor was 0.35 mm and read heavy at small sizes.
+    return max(0.20, min(0.45, size_mm * 0.18))
+
+
+def _coerce_shape_id(name):
+    """Map QGIS name/enum text → our lowercase marker id, or None."""
+    raw = str(name or '').strip()
+    if not raw:
+        return None
+    key = raw.lower().replace(' ', '_').replace('-', '_')
+    aliases = {
+        'cross_2': 'cross2',
+        'x': 'cross2',
+        'equilateraltriangle': 'equilateral_triangle',
+        'equilateral_triangle': 'equilateral_triangle',
+    }
+    key = aliases.get(key, key)
+    if key in _MARKER_IDS:
+        return key
+    return None
+
+
+def _layer_shape_id(sl):
+    if sl is None:
+        return None
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        if hasattr(sl, 'name') and callable(sl.name):
+            sid = _coerce_shape_id(sl.name())
+            if sid:
+                return sid
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        if hasattr(sl, 'properties'):
+            sid = _coerce_shape_id((sl.properties() or {}).get('name'))
+            if sid:
+                return sid
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        if hasattr(sl, 'shape') and callable(sl.shape):
+            # Qgis.MarkerShape.Cross → "MarkerShape.Cross" / "Cross"
+            sid = _coerce_shape_id(str(sl.shape()).split('.')[-1])
+            if sid:
+                return sid
+    return None
+
+
+def _tune_marker_layer_stroke(sl, size_mm, shape, paint_color=None):
+    """Scale outline and sharpen joins so small polygons stay readable."""
+    if sl is None:
+        return
+    size_mm = max(0.0, float(size_mm))
+    shape = resolve_marker_shape(shape)
+    line_like = shape in _LINE_MARKERS
+    if line_like:
+        stroke = _line_stroke_mm(size_mm)
+        oc = paint_color if (paint_color is not None and paint_color.isValid()) else None
+        pen_style = Qt.SolidLine
+    else:
+        stroke = _filled_outline_mm(size_mm)
+        if stroke > 0:
+            oc = QColor(17, 17, 17, 255)
+            pen_style = Qt.SolidLine
+        else:
+            oc = QColor(0, 0, 0, 0)
+            pen_style = Qt.NoPen
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        if hasattr(sl, 'setStrokeWidth'):
+            sl.setStrokeWidth(stroke)
+        elif hasattr(sl, 'setOutlineWidth'):
+            sl.setOutlineWidth(stroke)
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        if hasattr(sl, 'setStrokeStyle'):
+            sl.setStrokeStyle(pen_style)
+        elif hasattr(sl, 'setOutlineStyle'):
+            sl.setOutlineStyle(pen_style)
+    if oc is not None:
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            if hasattr(sl, 'setStrokeColor'):
+                sl.setStrokeColor(oc)
+            if hasattr(sl, 'setOutlineColor'):
+                sl.setOutlineColor(oc)
+    # Sharp corners (triangle, star, …) instead of round blobs at small px.
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        if hasattr(sl, 'setPenJoinStyle'):
+            sl.setPenJoinStyle(Qt.MiterJoin)
+        elif hasattr(sl, 'setStrokeJoinStyle'):
+            sl.setStrokeJoinStyle(Qt.MiterJoin)
+
+
+def _apply_symbol_color(sym, color, shape=None):
     c = QColor(color)
     if sym is None or not c.isValid():
         return
+    if shape:
+        shape = resolve_marker_shape(shape)
+    size_mm = 2.2
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        if hasattr(sym, 'size'):
+            size_mm = float(sym.size())
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         sym.setColor(c)
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
@@ -553,40 +734,70 @@ def _apply_symbol_color(sym, color):
             sl = sym.symbolLayer(i)
             if sl is None:
                 continue
-            if hasattr(sl, 'setFillColor'):
+            layer_shape = _layer_shape_id(sl)
+            use_shape = shape or layer_shape or DEFAULT_MARKER
+            line_like = use_shape in _LINE_MARKERS
+            if hasattr(sl, 'setFillColor') and not line_like:
                 with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                     sl.setFillColor(c)
             if hasattr(sl, 'setColor'):
                 with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                     sl.setColor(c)
+            # Cross / X are stroke-only — group colour must be on the outline.
+            if line_like:
+                with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                    if hasattr(sl, 'setStrokeColor'):
+                        sl.setStrokeColor(c)
+                    if hasattr(sl, 'setOutlineColor'):
+                        sl.setOutlineColor(c)
+            _tune_marker_layer_stroke(sl, size_mm, use_shape, paint_color=c)
 
 
-def _marker(color, size):
+def _marker(color, size, shape=None):
     c = QColor(color)
-    sym = QgsMarkerSymbol.createSimple({
-        'name': 'circle',
+    shape = resolve_marker_shape(shape)
+    size = max(0.0, float(size))
+    props = {
+        'name': shape,
         'color': qgis_color(c),
-        'outline_color': '17,17,17,255',
-        'outline_width': '0.2',
         'size': str(size),
-    })
-    _apply_symbol_color(sym, c)
+    }
+    if shape in _LINE_MARKERS:
+        # Cross / X have no fill — group colour is the stroke.
+        props['outline_color'] = qgis_color(c)
+        props['outline_width'] = str(_line_stroke_mm(size))
+    else:
+        ow = _filled_outline_mm(size)
+        if ow > 0:
+            props['outline_color'] = '17,17,17,255'
+            props['outline_width'] = str(ow)
+        else:
+            # No dark rim: fill alone reads sharper at small diameters.
+            props['outline_color'] = '0,0,0,0'
+            props['outline_width'] = '0'
+            props['outline_style'] = 'no'
+    sym = QgsMarkerSymbol.createSimple(props)
+    _apply_symbol_color(sym, c, shape=shape)
     return sym
 
 
-def style_by_group(layer, field='group', size=2.2, cmap=None, values=None):
+def style_by_group(layer, field='group', size=2.2, cmap=None, values=None,
+                   shape=None):
     if layer is None:
         return color_map(values or [], base=cmap)
     values = list(values) if values is not None else unique_groups(layer, field)
     cmap = color_map(values, base=cmap)
-    size = max(0.4, float(size))
+    size = max(0.0, float(size))
+    shape = resolve_marker_shape(shape)
     cats = []
     for val in values:
         color = cmap.get(val, QColor('#888888'))
-        cats.append(QgsRendererCategory(val, _marker(color, size), val))
+        cats.append(QgsRendererCategory(val, _marker(color, size, shape), val))
         if val == EMPTY_LABEL:
             for raw in (NULL, '', None):
-                cats.append(QgsRendererCategory(raw, _marker(color, size), EMPTY_LABEL))
+                cats.append(QgsRendererCategory(
+                    raw, _marker(color, size, shape), EMPTY_LABEL,
+                ))
     if not cats:
         return cmap
     renderer = QgsCategorizedSymbolRenderer(group_class_attr(field), cats)
@@ -594,7 +805,9 @@ def style_by_group(layer, field='group', size=2.2, cmap=None, values=None):
         renderer.setClassAttribute(group_class_attr(field))
     if values:
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-            renderer.setSourceSymbol(_marker(cmap.get(values[0], QColor('#888888')), size))
+            renderer.setSourceSymbol(
+                _marker(cmap.get(values[0], QColor('#888888')), size, shape)
+            )
     layer.setRenderer(renderer)
     layer.triggerRepaint()
     return cmap
@@ -793,13 +1006,121 @@ def apply_arrow_size(layer, head_mm):
     _apply_line_symbol_scale(layer, head_mm=head_mm)
 
 
+_MARKER_SHAPE_ENUM = {
+    'circle': 'Circle',
+    'square': 'Square',
+    'diamond': 'Diamond',
+    'triangle': 'Triangle',
+    'equilateral_triangle': 'EquilateralTriangle',
+    'pentagon': 'Pentagon',
+    'hexagon': 'Hexagon',
+    'octagon': 'Octagon',
+    'star': 'Star',
+    'cross': 'Cross',
+    'cross2': 'Cross2',
+}
+
+
+def _set_symbol_marker_name(sym, shape):
+    """Set the simple-marker shape on every marker layer of ``sym``."""
+    if sym is None:
+        return
+    shape = resolve_marker_shape(shape)
+    enum_name = _MARKER_SHAPE_ENUM.get(shape, 'Circle')
+    for i in range(sym.symbolLayerCount()):
+        lyr = sym.symbolLayer(i)
+        if lyr is None:
+            continue
+        done = False
+        if hasattr(lyr, 'setName'):
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                lyr.setName(shape)
+                done = True
+        if done:
+            continue
+        if hasattr(lyr, 'setShape'):
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                from qgis.core import Qgis
+                shapes = getattr(Qgis, 'MarkerShape', None)
+                enum = getattr(shapes, enum_name, None) if shapes is not None else None
+                if enum is not None:
+                    lyr.setShape(enum)
+
+
+def _symbol_marker_shape(sym):
+    """Best-effort simple-marker name from an existing symbol."""
+    if sym is None:
+        return DEFAULT_MARKER
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        for i in range(sym.symbolLayerCount()):
+            sid = _layer_shape_id(sym.symbolLayer(i))
+            if sid:
+                return sid
+    return DEFAULT_MARKER
+
+
+def _layer_stroke_color(sl):
+    if sl is None:
+        return None
+    for getter in ('strokeColor', 'outlineColor'):
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            if hasattr(sl, getter) and callable(getattr(sl, getter)):
+                c = getattr(sl, getter)()
+                if c is not None and c.isValid() and c.alpha() > 0:
+                    return QColor(c)
+    return None
+
+
+def _symbol_paint_color(sym):
+    """Visible tint: stroke for Cross/X, fill otherwise."""
+    if sym is None:
+        return QColor('#888888')
+    shape = _symbol_marker_shape(sym)
+    if shape in _LINE_MARKERS:
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            for i in range(sym.symbolLayerCount()):
+                c = _layer_stroke_color(sym.symbolLayer(i))
+                if c is not None:
+                    return c
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        c = sym.color()
+        if c is not None and c.isValid() and c.alpha() > 0:
+            return QColor(c)
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        for i in range(sym.symbolLayerCount()):
+            sl = sym.symbolLayer(i)
+            if sl is None:
+                continue
+            if hasattr(sl, 'fillColor') and callable(sl.fillColor):
+                c = sl.fillColor()
+                if c is not None and c.isValid() and c.alpha() > 0:
+                    return QColor(c)
+            c = _layer_stroke_color(sl)
+            if c is not None:
+                return c
+    return QColor('#888888')
+
+
+def _retune_marker_symbol_size(sym, size_mm):
+    if sym is None:
+        return
+    size_mm = max(0.0, float(size_mm))
+    # Capture paint colour *before* size/stroke tweaks (Cross stores it on stroke).
+    paint = _symbol_paint_color(sym)
+    shape = _symbol_marker_shape(sym)
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        sym.setSize(size_mm)
+    # Full colour pass keeps Cross/X on SolidLine + group stroke (not NoPen/black).
+    _apply_symbol_color(sym, paint, shape=shape)
+
+
 def apply_marker_size(layer, size_mm):
     if layer is None:
         return
     renderer = layer.renderer()
     if renderer is None:
         return
-    size_mm = max(0.4, float(size_mm))
+    size_mm = max(0.0, float(size_mm))
     if isinstance(renderer, QgsCategorizedSymbolRenderer):
         for i in range(len(renderer.categories())):
             cat = renderer.categories()[i]
@@ -807,12 +1128,51 @@ def apply_marker_size(layer, size_mm):
             if sym is None:
                 continue
             cloned = sym.clone()
-            cloned.setSize(size_mm)
+            _retune_marker_symbol_size(cloned, size_mm)
             renderer.updateCategorySymbol(i, cloned)
     else:
         sym = renderer.symbol() if hasattr(renderer, 'symbol') else None
         if sym is not None:
-            sym.setSize(size_mm)
+            _retune_marker_symbol_size(sym, size_mm)
+    layer.triggerRepaint()
+
+
+def apply_marker_shape(layer, shape):
+    """Change point marker model (circle, cross, …) without rebuilding colours."""
+    if layer is None:
+        return
+    renderer = layer.renderer()
+    if renderer is None:
+        return
+    shape = resolve_marker_shape(shape)
+
+    def _retune(sym):
+        if sym is None:
+            return
+        # Read colour before shape swap (fill↔stroke roles change for Cross/X).
+        col = _symbol_paint_color(sym)
+        _set_symbol_marker_name(sym, shape)
+        _apply_symbol_color(sym, col, shape=shape)
+
+    if isinstance(renderer, QgsCategorizedSymbolRenderer):
+        for i in range(len(renderer.categories())):
+            cat = renderer.categories()[i]
+            sym = cat.symbol()
+            if sym is None:
+                continue
+            cloned = sym.clone()
+            _retune(cloned)
+            renderer.updateCategorySymbol(i, cloned)
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            src = renderer.sourceSymbol()
+            if src is not None:
+                cloned = src.clone()
+                _retune(cloned)
+                renderer.setSourceSymbol(cloned)
+    else:
+        sym = renderer.symbol() if hasattr(renderer, 'symbol') else None
+        if sym is not None:
+            _retune(sym)
     layer.triggerRepaint()
 
 

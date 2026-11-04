@@ -187,6 +187,7 @@ class CloudWidget(QWidget):
         self._drag = None
         self._sort_cache = None
         self._paper = False
+        self._screen_bg = QColor('#141210')
         self._seg_a = []
         self._seg_b = []
         self._seg_cols = []
@@ -194,6 +195,10 @@ class CloudWidget(QWidget):
         self._draw_points = True
         self._draw_vectors = True
         self._arrow = arrow_px_from_mm(ARROW_MM_DEFAULT)
+
+    def set_screen_bg(self, color):
+        self._screen_bg = QColor(color)
+        self.update()
 
     def set_draw_mode(self, mode):
         self._draw_points = mode in ('points', 'both', None)
@@ -316,7 +321,7 @@ class CloudWidget(QWidget):
 
     def paintEvent(self, _event):
         p = QPainter(self)
-        bg = QColor('#ffffff') if self._paper else QColor('#141210')
+        bg = QColor('#ffffff') if self._paper else QColor(self._screen_bg)
         self._paint_cloud(p, self.width(), self.height(), bg, self._paper, 1.0)
 
     def _paint_cloud(self, p, w, h, bg, paper, scale):
@@ -442,23 +447,10 @@ class Scatter3DDialog(QDialog):
         self._arrow_size = max(ARROW_MM_MIN, float(arrow_size or ARROW_MM_DEFAULT))
         self.setWindowTitle('ARSYSplotQGIS · 3D')
         self.resize(980, 720)
-        self.setStyleSheet(
-            'QDialog { background:#1a1816; color:#fff5e6; }'
-            'QWidget { background:#1a1816; color:#fff5e6; }'
-            'QLabel { background:transparent; color:#ddd; }'
-            'QPushButton { background:#2a2622; color:#fff5e6; border:1px solid #4a453e;'
-            '  border-radius:4px; padding:4px 8px; }'
-            'QPushButton:hover { background:#3a3530; }'
-            'QPushButton:checked { background:#d97726; border-color:#f0a15a; color:#fff8ee; }'
-            'QPushButton:disabled { color:#6b645c; }'
-            'QScrollArea, QAbstractScrollArea, QAbstractScrollArea::viewport {'
-            '  background:#1a1816; border:none; }'
-            'QSlider::groove:horizontal { background:#2a2622; height:6px; border-radius:3px; }'
-            'QSlider::handle:horizontal { background:#d97726; width:12px; margin:-4px 0;'
-            '  border-radius:6px; }'
-            'QToolTip { background-color:#fff8ee; color:#1a1816;'
-            '  border:1px solid #8a8178; padding:4px 7px; font-size:10px; }'
-        )
+        self._ui_theme = 'dark'
+        self._gwrap = None
+        self._group_scroll = None
+        self._hint = None
 
         bar = QHBoxLayout()
         bar.setSpacing(6)
@@ -545,40 +537,83 @@ class Scatter3DDialog(QDialog):
         filt.addWidget(btn_none)
         filt.addWidget(btn_inv)
         self._group_btns = {}
-        gwrap = QWidget()
-        gwrap.setStyleSheet('background:#1a1816;')
-        self._group_layout = QHBoxLayout(gwrap)
+        self._gwrap = QWidget()
+        self._group_layout = QHBoxLayout(self._gwrap)
         self._group_layout.setContentsMargins(0, 0, 0, 0)
         self._group_layout.setSpacing(4)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(gwrap)
-        scroll.setFixedHeight(42)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setStyleSheet(
-            'QScrollArea { border:none; background:#1a1816; }'
-            'QScrollArea > QWidget > QWidget { background:#1a1816; }'
-        )
-        scroll.viewport().setStyleSheet('background:#1a1816;')
-        filt.addWidget(scroll, 1)
+        self._group_scroll = QScrollArea()
+        self._group_scroll.setWidgetResizable(True)
+        self._group_scroll.setWidget(self._gwrap)
+        self._group_scroll.setFixedHeight(42)
+        self._group_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._group_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        filt.addWidget(self._group_scroll, 1)
 
         self.cloud = CloudWidget()
-        hint = QLabel(
+        self._hint = QLabel(
             'Left-drag rotate · right-drag pan · wheel zoom. '
             'P1 = centre · vector = P2→P3.'
         )
-        hint.setStyleSheet('color:#999;')
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.addLayout(bar)
         layout.addLayout(filt)
         layout.addWidget(self.cloud, 1)
-        layout.addWidget(hint)
+        layout.addWidget(self._hint)
         self.cloud.set_draw_mode(self._display_mode)
+        parent_theme = 'dark'
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            parent_theme = getattr(parent, 'ui_theme', 'dark') or 'dark'
+        self.apply_theme(parent_theme)
         self.set_arrow_size(self._arrow_size, sync_slider=False)
         self.reload(group_field, keep_camera=False)
+
+    def apply_theme(self, name='dark'):
+        """Match the plugin dock dark / light chrome."""
+        light = name == 'light'
+        self._ui_theme = 'light' if light else 'dark'
+        if light:
+            bg, ink, btn, border, hover = (
+                '#f3f0ea', '#1a1816', '#e8e2d8', '#c8c0b4', '#ddd5c8',
+            )
+            muted, groove, cloud = '#6b645c', '#ddd5c8', '#faf8f4'
+        else:
+            bg, ink, btn, border, hover = (
+                '#1a1816', '#fff5e6', '#2a2622', '#4a453e', '#3a3530',
+            )
+            muted, groove, cloud = '#999999', '#2a2622', '#141210'
+        self.setStyleSheet(
+            'QDialog { background:%s; color:%s; }'
+            'QWidget { background:%s; color:%s; }'
+            'QLabel { background:transparent; color:%s; }'
+            'QPushButton { background:%s; color:%s; border:1px solid %s;'
+            '  border-radius:4px; padding:4px 8px; }'
+            'QPushButton:hover { background:%s; }'
+            'QPushButton:checked { background:#d97726; border-color:#f0a15a; color:#fff8ee; }'
+            'QPushButton:disabled { color:#6b645c; }'
+            'QScrollArea, QAbstractScrollArea, QAbstractScrollArea::viewport {'
+            '  background:%s; border:none; }'
+            'QSlider::groove:horizontal { background:%s; height:6px; border-radius:3px; }'
+            'QSlider::handle:horizontal { background:#d97726; width:12px; margin:-4px 0;'
+            '  border-radius:6px; }'
+            'QToolTip { background-color:#fff8ee; color:#1a1816;'
+            '  border:1px solid #8a8178; padding:4px 7px; font-size:10px; }'
+            % (bg, ink, bg, ink, muted, btn, ink, border, hover, bg, groove)
+        )
+        if self._gwrap is not None:
+            self._gwrap.setStyleSheet('background:%s;' % bg)
+        if self._group_scroll is not None:
+            self._group_scroll.setStyleSheet(
+                'QScrollArea { border:none; background:%s; }'
+                'QScrollArea > QWidget > QWidget { background:%s; }'
+                % (bg, bg)
+            )
+            self._group_scroll.viewport().setStyleSheet('background:%s;' % bg)
+        if self._hint is not None:
+            self._hint.setStyleSheet('color:%s;' % muted)
+        if hasattr(self, 'cloud') and self.cloud is not None:
+            self.cloud.set_screen_bg(cloud)
 
     def set_draw_mode(self, mode):
         self._display_mode = mode or 'points'
@@ -782,6 +817,13 @@ def apply_open_arrow_size(iface, arrow_size):
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             if dlg.isVisible():
                 dlg.set_arrow_size(arrow_size)
+
+
+def apply_open_theme(iface, theme_name):
+    for dlg in getattr(iface, '_arsysplotqgis_3d', []):
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            if dlg.isVisible():
+                dlg.apply_theme(theme_name)
 
 
 def refresh_open_views(iface, layer, group_field=None, display_mode=None, arrow_size=None):

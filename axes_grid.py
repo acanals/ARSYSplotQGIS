@@ -8,7 +8,7 @@ from qgis.PyQt.QtCore import QPoint, Qt, QRectF
 from qgis.PyQt.QtGui import QColor, QFont, QPainter, QPen
 from qgis.PyQt.QtWidgets import QWidget
 
-from .export_dialog import mm_to_px, pt_to_px
+from .export_dialog import is_light_color, mm_to_px, pt_to_px
 
 from .layers import group_label, padded_data_extent
 
@@ -547,8 +547,17 @@ class AxesGridOverlay(QWidget):
             grid, axis, label, title = GRID_LIGHT, AXIS_LIGHT, LABEL_LIGHT, TITLE_LIGHT
             margin = self._paper_bg if self._paper_bg is not None else QColor('#ffffff')
         else:
-            grid, axis, label, title = GRID, AXIS, LABEL, TITLE
-            margin = SCREEN_BG
+            # Follow the map canvas (dark / light UI theme).
+            try:
+                margin = QColor(canvas.canvasColor())
+            except Exception:
+                margin = QColor(SCREEN_BG)
+            if is_light_color(margin):
+                grid, axis, label, title = (
+                    GRID_LIGHT, AXIS_LIGHT, LABEL_LIGHT, TITLE_LIGHT,
+                )
+            else:
+                grid, axis, label, title = GRID, AXIS, LABEL, TITLE
 
         p.setRenderHint(QPainter.Antialiasing, True)
         p.setPen(Qt.NoPen)
@@ -631,7 +640,14 @@ class AxesGridOverlay(QWidget):
         if self._paper:
             ink, heading = LABEL_LIGHT, TITLE_LIGHT
         else:
-            ink, heading = LABEL, TITLE
+            try:
+                bg = QColor(self.canvas.canvasColor())
+            except Exception:
+                bg = QColor(SCREEN_BG)
+            if is_light_color(bg):
+                ink, heading = LABEL_LIGHT, TITLE_LIGHT
+            else:
+                ink, heading = LABEL, TITLE
         self._paint_legend(p, plot_right, top, bottom, ink, heading)
 
     def _paint_legend(self, p, plot_right, top, bottom, ink, heading_color):

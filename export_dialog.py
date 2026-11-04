@@ -12,6 +12,7 @@ from qgis.PyQt.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QSpinBox,
     QVBoxLayout,
 )
 
@@ -91,10 +92,16 @@ def draw_header(painter, width, title, subtitle, bg, scale):
         )
 
 
+# Default level-label size (isoline values + colour-scale ticks), typographic points.
+DEFAULT_LEVEL_LABEL_PT = 9
+
+
 class ExportImageDialog(QDialog):
-    def __init__(self, parent=None, title='', subtitle='', bg=None):
+    def __init__(self, parent=None, title='', subtitle='', bg=None,
+                 label_size_pt=None, density_on=False):
         super().__init__(parent)
         self.setWindowTitle('Export image')
+        self._density_on = bool(density_on)
         self._bg = QColor(bg if bg is not None else '#ffffff')
         if not self._bg.isValid():
             self._bg = QColor('#ffffff')
@@ -121,15 +128,41 @@ class ExportImageDialog(QDialog):
             self.cmb_dpi.addItem(label, dpi)
         self.cmb_dpi.setCurrentIndex(2)
 
+        try:
+            pt0 = int(label_size_pt) if label_size_pt is not None else DEFAULT_LEVEL_LABEL_PT
+        except (TypeError, ValueError):
+            pt0 = DEFAULT_LEVEL_LABEL_PT
+        self.spn_label_pt = QSpinBox()
+        self.spn_label_pt.setRange(6, 36)
+        self.spn_label_pt.setSingleStep(1)
+        self.spn_label_pt.setValue(max(6, min(36, pt0)))
+        self.spn_label_pt.setSuffix(' pt')
+        self.spn_label_pt.setToolTip(
+            'Size of isoline level labels on the figure, '
+            'in typographic points — as in a word processor. '
+            'The colour-scale ticks stay a fixed size.'
+        )
+
         form = QFormLayout()
         form.addRow('Background', bg_row)
         form.addRow('Title', self.ed_title)
         form.addRow('Subtitle', self.ed_sub)
+        if self._density_on:
+            form.addRow('Level labels', self.spn_label_pt)
+        else:
+            self.spn_label_pt.hide()
         form.addRow('Resolution', self.cmb_dpi)
-        hint = QLabel(
-            'Exports a paper figure of the data frame (not the empty pane). '
-            'Higher dpi gives a larger, sharper PNG for print.'
-        )
+        if self._density_on:
+            hint = QLabel(
+                'Exports a paper figure of the data frame (not the empty pane). '
+                'Density is recomputed at paper resolution: higher dpi samples '
+                'the KDE more finely (not just a larger upscaled PNG). '
+                'Isoline level labels use points (pt); the colour scale keeps a fixed size.'
+            )
+        else:
+            hint = QLabel(
+                'Exports a paper figure of the data frame (not the empty pane).'
+            )
         hint.setWordWrap(True)
         hint.setStyleSheet('color:#888;')
 
@@ -141,7 +174,7 @@ class ExportImageDialog(QDialog):
         layout.addLayout(form)
         layout.addWidget(hint)
         layout.addWidget(buttons)
-        self.resize(420, 220)
+        self.resize(420, 260 if self._density_on else 220)
 
     def _sync_bg_btn(self):
         self.btn_bg.setStyleSheet(
@@ -162,9 +195,12 @@ class ExportImageDialog(QDialog):
             dpi = int(dpi)
         except (TypeError, ValueError):
             dpi = 96
-        return {
+        out = {
             'title': self.ed_title.text().strip(),
             'subtitle': self.ed_sub.text().strip(),
             'bg': QColor(self._bg),
             'dpi': dpi,
         }
+        if self._density_on:
+            out['label_size_pt'] = int(self.spn_label_pt.value())
+        return out

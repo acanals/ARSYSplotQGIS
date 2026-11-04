@@ -235,10 +235,11 @@ The renderer is based on **Qt painting**. It does not initialise or use the QGIS
 **Reset** restores the initial display settings for the loaded dataset:
 
 - All groups enabled.
-- Original XYZ range.
+- Full XYZ range.
 - Default point and arrow sizes.
-- Initial zoom and spatial extent.
-- Default adaptive frame setting.
+- Draw → Points; Adaptive frame off.
+- Re-fit zoom on the three main canvases (and open Zoom / 3D windows).
+- Density settings and Dark/Light are left unchanged.
 
 ---
 

@@ -93,13 +93,54 @@ COLOR_SCHEMES = (
         (0.00, 236, 226, 208), (0.35, 196, 148, 92),
         (0.65, 148, 78, 48), (1.00, 72, 42, 28),
     )),
+    # Mid greys only — distinct from full-range B&W.
     ('gray', 'Gray', (
-        (0.00, 220, 220, 220), (1.00, 20, 20, 20),
+        (0.00, 176, 176, 176), (0.35, 136, 136, 136),
+        (0.65, 96, 96, 96), (1.00, 64, 64, 64),
+    )),
+    ('bw', 'B&W', (
+        (0.00, 255, 255, 255), (0.50, 128, 128, 128), (1.00, 0, 0, 0),
+    )),
+    # Archaeology-oriented + extra density ramps (plugin-controlled, not QgsStyle).
+    ('ochre', 'Ochre', (
+        (0.00, 255, 248, 220), (0.30, 232, 184, 72),
+        (0.60, 196, 108, 36), (1.00, 120, 40, 16),
+    )),
+    ('ash', 'Ash', (
+        (0.00, 28, 24, 22), (0.35, 72, 64, 58),
+        (0.65, 148, 140, 132), (1.00, 236, 232, 224),
+    )),
+    ('sediment', 'Sediment', (
+        (0.00, 42, 36, 32), (0.25, 96, 72, 52),
+        (0.50, 168, 132, 88), (0.75, 198, 176, 128),
+        (1.00, 232, 220, 188),
+    )),
+    ('archeo', 'Archeo', (
+        # Light → dense dark (sediment × terrain); Invert flips to dark→cream.
+        (0.00, 252, 236, 196), (0.10, 244, 206, 128),
+        (0.25, 232, 168, 64), (0.42, 188, 186, 72),
+        (0.60, 98, 168, 92), (0.80, 42, 128, 118),
+        (1.00, 36, 58, 88),
+    )),
+    ('bone', 'Bone', (
+        (0.00, 252, 246, 232), (0.40, 220, 198, 162),
+        (0.70, 168, 132, 96), (1.00, 92, 64, 48),
+    )),
+    ('copper', 'Copper', (
+        (0.00, 20, 16, 28), (0.30, 72, 48, 64),
+        (0.55, 160, 88, 48), (0.80, 220, 160, 72),
+        (1.00, 252, 236, 180),
+    )),
+    ('turbo', 'Turbo', (
+        (0.00, 48, 18, 59), (0.20, 33, 144, 140),
+        (0.40, 34, 167, 71), (0.55, 188, 200, 36),
+        (0.70, 252, 166, 17), (0.85, 245, 79, 40),
+        (1.00, 180, 4, 38),
     )),
 )
 
 _SCHEME_MAP = {sid: (label, stops) for sid, label, stops in COLOR_SCHEMES}
-DEFAULT_SCHEME = 'viridis'
+DEFAULT_SCHEME = 'archeo'
 
 
 def resolve_scheme(name):
@@ -112,8 +153,10 @@ def scheme_stops(name):
     return _SCHEME_MAP[resolve_scheme(name)][1]
 
 
-def color_at(t, scheme='viridis'):
+def color_at(t, scheme='viridis', invert=False):
     t = max(0.0, min(1.0, float(t)))
+    if invert:
+        t = 1.0 - t
     stops = scheme_stops(scheme)
     if t <= stops[0][0]:
         _t, r, g, b = stops[0]
@@ -132,8 +175,13 @@ def color_at(t, scheme='viridis'):
     return QColor(r, g, b)
 
 
-def make_ramp(scheme='viridis'):
-    stops = scheme_stops(scheme)
+def make_ramp(scheme='viridis', invert=False):
+    stops = list(scheme_stops(scheme))
+    if invert:
+        stops = sorted(
+            ((1.0 - float(t), r, g, b) for t, r, g, b in stops),
+            key=lambda s: s[0],
+        )
     c0 = QColor(stops[0][1], stops[0][2], stops[0][3])
     c1 = QColor(stops[-1][1], stops[-1][2], stops[-1][3])
     ramp = QgsGradientColorRamp(c0, c1)
@@ -147,13 +195,13 @@ def make_ramp(scheme='viridis'):
     return ramp
 
 
-def scheme_icon(scheme, width=72, height=14):
+def scheme_icon(scheme, width=72, height=14, invert=False):
     pm = QPixmap(max(24, int(width)), max(10, int(height)))
     p = QPainter(pm)
     w = pm.width()
     h = pm.height()
     for x in range(w):
-        p.setPen(color_at(x / float(max(w - 1, 1)), scheme))
+        p.setPen(color_at(x / float(max(w - 1, 1)), scheme, invert=invert))
         p.drawLine(x, 0, x, h)
     p.end()
     return QIcon(pm)
@@ -177,6 +225,18 @@ def _processing():
         return processing
 
 
+# Cells across the kernel radius. Below this the peak crest is 1–2 px and the
+# last isoline reads as a black hole on longitudinal / transversal views.
+_MIN_RADIUS_CELLS = 12.0
+# Interactive preview: Discrete class edges stair-step by 1 cell; need enough
+# cells that those stairs are sub-pixel on a typical HiDPI pane.
+_PREVIEW_MAX_CELLS = 2400.0
+# Supersample vs logical canvas pixels so Bands edges stay sub-pixel.
+_PREVIEW_OVERSAMPLE = 2.0
+# Paper product: allow finer grids; hard stop so 600 dpi does not explode.
+_PAPER_MAX_CELLS = 4000.0
+
+
 def suggest_params(layer):
     """Radius and cell size in layer units from the current extent."""
     if layer is None:
@@ -188,21 +248,19 @@ def suggest_params(layer):
     if diag <= 0:
         return 0.5, 0.05
     radius = max(0.12, min(diag * 0.045, diag * 0.2))
-    pixel = max(radius / 36.0, diag / 360.0)
+    # Finer of crest-safe max cell and preview target — never max() (that
+    # picked radius/12 and forced a ~266-cell coarse grid).
+    pixel = min(radius / _MIN_RADIUS_CELLS, diag / _PREVIEW_MAX_CELLS)
+    pixel = max(pixel, 0.002)
     return round(radius, 3), round(pixel, 4)
 
 
-# Cells across the kernel radius. Below this the peak crest is 1–2 px and the
-# last isoline reads as a black hole on longitudinal / transversal views.
-_MIN_RADIUS_CELLS = 12.0
-
-
 def adapt_kernel(layer, radius, pixel, ref_layer=None):
-    """Scale XY radius/cell to a section so the circular kernel fits the short axis.
+    """Scale Radius and Cell for a section with the same short-axis factor.
 
-    Keeps enough cells across the radius so the density crest stays paintable
-    (see _clamp_pixel). Shrinking radius and then coarsening the grid to the
-    long side was what left a 1–2 cell peak inside the isoline ring.
+    Plan keeps the UI values. Longitudinal / transversal shrink both by the
+    same ``scale`` so Cell stays reactive on every pane (not only Plan).
+    Memory bounds stay in ``_clamp_pixel``.
     """
     radius = max(0.05, float(radius))
     pixel = max(0.002, float(pixel))
@@ -219,12 +277,10 @@ def adapt_kernel(layer, radius, pixel, ref_layer=None):
     lay_s = _short(layer)
     if ref_s <= 1e-9 or lay_s <= 1e-9:
         return radius, pixel
-    # Milder floor than 0.12: sections stay smoother; crest keeps width.
+    # Same factor for Radius and Cell — Cell must track UI on all three views.
     scale = max(0.22, min(1.0, lay_s / ref_s))
     radius = max(0.05, radius * scale)
-    # Prefer a finer cell than a mere uniform scale of the plan pixel so the
-    # short axis still resolves the kernel after _clamp_pixel.
-    pixel = min(max(0.002, pixel * scale), max(radius / _MIN_RADIUS_CELLS, 0.002))
+    pixel = max(0.002, pixel * scale)
     return radius, pixel
 
 
@@ -268,8 +324,49 @@ def map_clip(user_min, user_max, ref_limits, dest_limits):
     return vmin, vmax
 
 
-def _clamp_pixel(layer, radius, pixel):
-    """Bound cell size for performance, but never starve the kernel crest."""
+def _extent_wh(extent):
+    """Return (width, height) from (xmin, xmax, ymin, ymax) or QgsRectangle."""
+    xmin = xmax = ymin = ymax = None
+    with suppress(AttributeError, TypeError, ValueError):
+        if hasattr(extent, 'xMinimum'):
+            xmin = float(extent.xMinimum())
+            xmax = float(extent.xMaximum())
+            ymin = float(extent.yMinimum())
+            ymax = float(extent.yMaximum())
+        else:
+            xmin, xmax, ymin, ymax = (
+                float(extent[0]), float(extent[1]),
+                float(extent[2]), float(extent[3]),
+            )
+    if xmin is None:
+        return None, None
+    return max(xmax - xmin, 1e-12), max(ymax - ymin, 1e-12)
+
+
+def _device_pixel(extent, out_w, out_h, radius, max_cells):
+    """~1 KDE cell per output pixel, then memory cap and crest floor."""
+    width, height = _extent_wh(extent)
+    radius = max(0.05, float(radius))
+    if width is None:
+        return max(0.002, radius / _MIN_RADIUS_CELLS)
+    ow = max(int(out_w), 1)
+    oh = max(int(out_h), 1)
+    cell = max(width / float(ow), height / float(oh))
+    longest = max(width, height)
+    cell = max(cell, longest / float(max_cells), 0.002)
+    max_cell = radius / _MIN_RADIUS_CELLS
+    if cell > max_cell:
+        cell = max(max_cell, 0.002)
+    return cell
+
+
+def _clamp_pixel(layer, radius, pixel, for_paper=False):
+    """Bound cell size for memory only — keep the UI Cell whenever feasible.
+
+    Previously also forced ``pixel <= radius/12`` (crest quality). That pinned
+    Cell to a near-fixed value for typical radii, so spin changes never
+    reached the KDE and the drawing looked frozen.
+    """
     ext = layer.extent()
     pad = 2.0 * max(radius, 0.0)
     width = float(ext.width()) + pad
@@ -277,15 +374,45 @@ def _clamp_pixel(layer, radius, pixel):
     longest = max(width, height, 1.0)
     radius = max(0.05, float(radius))
     pixel = max(float(pixel), 0.002)
-    # Performance floor: ~720 cells on the long side.
-    min_pixel = longest / 720.0
-    pixel = max(pixel, min_pixel)
-    # Crest wins over the 720-cap on elongated sections (X/Z, Y/Z): a coarse
-    # grid makes radius/pixel ≈ 2 and the peak vanishes inside the isoline.
-    max_pixel = radius / _MIN_RADIUS_CELLS
+    max_cells = _PAPER_MAX_CELLS if for_paper else _PREVIEW_MAX_CELLS
+    # Memory floor: refuse absurdly fine grids (longest side ≤ max_cells).
+    min_pixel = longest / float(max_cells)
+    if pixel < min_pixel:
+        pixel = min_pixel
+    # Coarse ceiling: cell larger than the kernel is meaningless for KDE.
+    max_pixel = max(radius, min_pixel)
     if pixel > max_pixel:
-        pixel = max(max_pixel, 0.002)
+        pixel = max_pixel
     return pixel
+
+
+def preview_pixel(extent, canvas_w, canvas_h, radius, device_pixel_ratio=1.0):
+    """Cell size so Discrete stairs stay sub-pixel on the canvas at fit.
+
+    Rule: device pixels drive the density grid. Uses HiDPI ratio and
+    ``_PREVIEW_OVERSAMPLE`` so one class edge step is finer than one screen
+    pixel (Bands + nearest would otherwise read as dents de serra).
+    """
+    dpr = max(1.0, float(device_pixel_ratio) or 1.0)
+    scale = dpr * _PREVIEW_OVERSAMPLE
+    cw = max(int(round(float(canvas_w) * scale)), 1)
+    ch = max(int(round(float(canvas_h) * scale)), 1)
+    # Canvas may still be unset at first show — aim for a typical pane.
+    if cw < int(40 * scale):
+        cw = int(640 * scale)
+    if ch < int(40 * scale):
+        ch = int(400 * scale)
+    return _device_pixel(extent, cw, ch, radius, _PREVIEW_MAX_CELLS)
+
+
+def paper_pixel(extent, plot_w, plot_h, radius):
+    """Cell size so the KDE grid matches paper output pixels.
+
+    Rule: paper pixels drive the density grid; the screen never does.
+    ~1 KDE cell per output pixel, then memory cap (~4000) and crest floor.
+    ``extent`` is (xmin, xmax, ymin, ymax) or a QgsRectangle.
+    """
+    return _device_pixel(extent, plot_w, plot_h, radius, _PAPER_MAX_CELLS)
 
 
 def _resampling_method(*names):
@@ -306,27 +433,6 @@ def _resampling_method(*names):
                 if val is not None:
                     return val
     return None
-
-
-def _enable_crisp_resample(rlayer):
-    """Nearest neighbour so discrete colour bands stay sharp (hypsometric style)."""
-    nearest = _resampling_method('Nearest', 'NearestNeighbour')
-    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-        rlayer.setResamplingEnabled(False)
-    provider = rlayer.dataProvider()
-    if provider is not None and nearest is not None:
-        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-            provider.setZoomedInResamplingMethod(nearest)
-            provider.setZoomedOutResamplingMethod(nearest)
-    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-        filt = rlayer.resampleFilter()
-        if filt is not None:
-            if hasattr(filt, 'setZoomedInResampler'):
-                filt.setZoomedInResampler(None)
-            if hasattr(filt, 'setZoomedOutResampler'):
-                filt.setZoomedOutResampler(None)
-            if hasattr(filt, 'setMaxOversampling'):
-                filt.setMaxOversampling(1.0)
 
 
 def _class_count(levels):
@@ -466,11 +572,11 @@ def _kernel_index(kernel):
     return max(0, min(idx, len(KERNELS) - 1))
 
 
-def build_heatmap(point_layer, radius, pixel, kernel=0):
+def build_heatmap(point_layer, radius, pixel, kernel=0, for_paper=False):
     if point_layer is None or point_layer.featureCount() < 2:
         return None
     radius = max(0.05, float(radius))
-    pixel = _clamp_pixel(point_layer, radius, pixel)
+    pixel = _clamp_pixel(point_layer, radius, pixel, for_paper=for_paper)
     kernel = _kernel_index(kernel)
     params = {
         'INPUT': point_layer,
@@ -506,6 +612,8 @@ def build_heatmap(point_layer, radius, pixel, kernel=0):
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         rlayer.reload()
     rlayer.setCustomProperty('arsysplotqgis', 'density-raster')
+    rlayer.setCustomProperty('arsysplotqgis_cell', '%.8g' % float(pixel))
+    rlayer.setCustomProperty('arsysplotqgis_radius', '%.8g' % float(radius))
     raster_limits(rlayer)
     _enable_smooth_resample(rlayer)
     return rlayer
@@ -786,7 +894,7 @@ def _force_open_last_class(renderer):
 
 
 def style_heatmap(rlayer, opacity=0.7, scheme='viridis', levels=8,
-                  clip_min=None, clip_max=None, fill='bands'):
+                  clip_min=None, clip_max=None, fill='bands', invert=False):
     """Style the KDE raster via QgsSingleBandPseudoColorRenderer.createShader.
 
     Same path as Layer Properties → Singleband pseudocolor. Bands = Discrete
@@ -805,6 +913,7 @@ def style_heatmap(rlayer, opacity=0.7, scheme='viridis', levels=8,
     paint_max = float(spec['paint_max'])
     open_top = bool(spec['open_top'])
     scheme = resolve_scheme(scheme)
+    invert = bool(invert)
     opacity = max(0.0, min(1.0, float(opacity)))
     fill = 'cloud' if fill == 'cloud' else 'bands'
     levels_n = int(spec['levels'])
@@ -819,7 +928,7 @@ def style_heatmap(rlayer, opacity=0.7, scheme='viridis', levels=8,
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         renderer.setNodataColor(QColor(0, 0, 0, 0))
 
-    ramp = make_ramp(scheme)
+    ramp = make_ramp(scheme, invert=invert)
     if fill == 'cloud':
         ramp_type = (
             getattr(Qgis.ShaderInterpolationMethod, 'Linear', None)
@@ -855,7 +964,7 @@ def style_heatmap(rlayer, opacity=0.7, scheme='viridis', levels=8,
                 )
         fn.setMinimumValue(vmin)
         fn.setMaximumValue(paint_max)
-        fn.setSourceColorRamp(make_ramp(scheme))
+        fn.setSourceColorRamp(make_ramp(scheme, invert=invert))
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             if fill != 'cloud':
                 fn.classifyColorRamp(levels_n)
@@ -866,7 +975,7 @@ def style_heatmap(rlayer, opacity=0.7, scheme='viridis', levels=8,
             for i in range(1, n + 1):
                 upper = float('inf') if i == n else (vmin + interval * i)
                 t = (i - 1) / float(n - 1) if n > 1 else 0.5
-                c = QColor(color_at(t, scheme))
+                c = QColor(color_at(t, scheme, invert=invert))
                 c.setAlpha(255)
                 items.append(QgsColorRampShader.ColorRampItem(
                     upper, c, 'inf' if not math.isfinite(upper) else '%.4g' % upper,
@@ -886,12 +995,16 @@ def style_heatmap(rlayer, opacity=0.7, scheme='viridis', levels=8,
             _apply_max_clip(renderer, vmax)
     _hide_outside_stretch(renderer, vmin, vmax, open_top)
     rlayer.setRenderer(renderer)
-    # Bilinear for both fills: nearest makes 1–2-cell longitudinal peaks vanish
-    # inside the last isoline ring (reads as a black hole).
+    # Always bilinear/cubic on a fine grid: Discrete class edges get ~1 px of
+    # anti-alias instead of nearest-neighbour dents de serra. Coarse+bilinear
+    # was the old "dirty" look; nearest on Discrete is sharp sawtooth. Crest
+    # paintability comes from _MIN_RADIUS_CELLS, not from nearest.
     _enable_smooth_resample(rlayer)
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         rlayer.setCustomProperty('arsysplotqgis_fill', fill)
         rlayer.setCustomProperty('arsysplotqgis_scheme', scheme)
+        rlayer.setCustomProperty('arsysplotqgis_invert', '1' if invert else '0')
+        rlayer.setCustomProperty('arsysplotqgis_levels', str(int(levels_n)))
         last_v = 'cloud'
         if fill != 'cloud':
             try:
@@ -1125,8 +1238,15 @@ def _label_placement_line():
     return None
 
 
-def style_contour_labels(layer, on=False):
-    """Toggle density-value labels along isolines."""
+# Isoline / level labels: typographic points (word-processor style).
+_ISOLINE_LABEL_PT = 9.0
+
+
+def style_contour_labels(layer, on=False, size_pt=None):
+    """Toggle density-value labels along isolines.
+
+    ``size_pt`` is typographic points (pt), as in a word processor.
+    """
     if layer is None:
         return
     if not on:
@@ -1147,6 +1267,12 @@ def style_contour_labels(layer, on=False):
         QgsUnitTypes,
         QgsVectorLayerSimpleLabeling,
     )
+    from qgis.PyQt.QtGui import QFont
+    try:
+        pt = float(size_pt) if size_pt is not None else float(_ISOLINE_LABEL_PT)
+    except (TypeError, ValueError):
+        pt = float(_ISOLINE_LABEL_PT)
+    pt = max(6.0, min(36.0, pt))
     settings = QgsPalLayerSettings()
     settings.fieldName = field
     settings.isExpression = False
@@ -1155,7 +1281,7 @@ def style_contour_labels(layer, on=False):
         settings.drawLabels = True
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         settings.formatNumbers = True
-        settings.decimals = 1
+        settings.decimals = 0
     placement = _label_placement_line()
     if placement is not None:
         settings.placement = placement
@@ -1180,31 +1306,44 @@ def style_contour_labels(layer, on=False):
         flags = None
         flag_enum = getattr(Qgis, 'LabelLinePlacementFlag', None)
         if flag_enum is not None:
-            on_line = getattr(flag_enum, 'OnLine', None)
+            # Above the stroke — OnLine reads as beads on the isoline.
+            above = getattr(flag_enum, 'AboveLine', None)
             map_or = getattr(flag_enum, 'MapOrientation', None)
-            if on_line is not None:
-                flags = on_line
+            if above is not None:
+                flags = above
                 if map_or is not None:
                     flags = flags | map_or
+            else:
+                on_line = getattr(flag_enum, 'OnLine', None)
+                if on_line is not None:
+                    flags = on_line
+                    if map_or is not None:
+                        flags = flags | map_or
         if flags is not None and hasattr(line, 'setPlacementFlags'):
             line.setPlacementFlags(flags)
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            if hasattr(line, 'setDistExternal'):
+                line.setDistExternal(0.6)
+            elif hasattr(line, 'setDistance'):
+                line.setDistance(0.6)
         settings.setLineSettings(line)
     fmt = QgsTextFormat()
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-        fmt.setSize(7.5)
+        fmt.setSize(pt)
         fmt.setSizeUnit(QgsUnitTypes.RenderPoints)
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        font = QFont()
+        font.setBold(False)
+        fmt.setFont(font)
     fmt.setColor(QColor('#1a1816'))
+    # No white halo / background — buffer reads as stains on the density fill.
     buf = QgsTextBufferSettings()
-    buf.setEnabled(True)
-    buf.setSize(0.22)
-    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-        buf.setSizeUnit(QgsUnitTypes.RenderMillimeters)
-    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-        buf.setFillBufferInterior(False)
-    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-        buf.setOpacity(0.45)
-    buf.setColor(QColor(255, 255, 255, 110))
+    buf.setEnabled(False)
     fmt.setBuffer(buf)
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        bg = fmt.background()
+        bg.setEnabled(False)
+        fmt.setBackground(bg)
     settings.setFormat(fmt)
     layer.setLabeling(QgsVectorLayerSimpleLabeling(settings))
     layer.setLabelsEnabled(True)
@@ -1212,42 +1351,53 @@ def style_contour_labels(layer, on=False):
 
 
 def _line_symbol(color, width):
-    """Opaque millimetre stroke. createSimple drops width; build the layer explicitly."""
+    """Opaque millimetre stroke. createSimple drops width; build the layer explicitly.
+
+    Width 0 must not use QGIS hairline (cosmetic 1 px — reads thicker than
+    0.10 mm). Invisible stroke instead.
+    """
     width = max(0.0, min(1.0, float(width)))
     color = color if isinstance(color, QColor) else QColor(color)
-    sl = QgsSimpleLineSymbolLayer(color, width)
+    invisible = width <= 1e-9
+    draw_w = 0.01 if invisible else width
+    draw_c = QColor(0, 0, 0, 0) if invisible else QColor(color)
+    sl = QgsSimpleLineSymbolLayer(draw_c, draw_w)
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         sl.setWidthUnit(QgsUnitTypes.RenderMillimeters)
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         sl.setPenCapStyle(Qt.RoundCap)
         sl.setPenJoinStyle(Qt.RoundJoin)
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-        sl.setPenStyle(Qt.SolidLine)
+        sl.setPenStyle(Qt.NoPen if invisible else Qt.SolidLine)
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        if invisible:
+            sl.setColor(QColor(0, 0, 0, 0))
     sym = QgsLineSymbol()
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         if not sym.changeSymbolLayer(0, sl):
             extra = sl.clone() if hasattr(sl, 'clone') else sl
             sym.appendSymbolLayer(extra)
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-        sym.setColor(color)
-        sym.setWidth(width)
+        sym.setColor(draw_c)
+        sym.setWidth(draw_w)
         sym.setWidthUnit(QgsUnitTypes.RenderMillimeters)
-        sym.setOpacity(1.0)
+        sym.setOpacity(0.0 if invisible else 1.0)
     return sym
 
 
 def style_contours(layer, with_heatmap=True, scheme='viridis', labels=False,
-                   width=0.15):
+                   width=0.15, invert=False):
     if layer is None:
         return
     width = max(0.0, min(1.0, float(width)))
+    invert = bool(invert)
     field = 'ELEV' if layer.fields().lookupField('ELEV') >= 0 else (
         layer.fields()[0].name() if layer.fields().count() else ''
     )
     if with_heatmap or not field:
         layer.setRenderer(QgsSingleSymbolRenderer(_line_symbol('#000000', width)))
     else:
-        ramp = make_ramp(scheme)
+        ramp = make_ramp(scheme, invert=invert)
         renderer = QgsGraduatedSymbolRenderer(field)
         renderer.setSourceColorRamp(ramp)
         try:
@@ -1264,7 +1414,7 @@ def style_contours(layer, with_heatmap=True, scheme='viridis', labels=False,
         layer.setCustomProperty('arsysplotqgis_line_width', '%.3f' % width)
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         layer.setOpacity(1.0)
-    style_contour_labels(layer, on=labels)
+    style_contour_labels(layer, on=labels, size_pt=None)
 
 
 def split_pair(pair):
@@ -1277,7 +1427,7 @@ def split_pair(pair):
 
 
 def _build_isolines(raster, mode, levels, scheme, labels, clip_min, clip_max,
-                    line_width):
+                    line_width, invert=False):
     """Isoline overlay for the current class breaks. Not a fill layer."""
     need_lines = mode in ('contours', 'both') or bool(labels)
     if not need_lines:
@@ -1289,7 +1439,7 @@ def _build_isolines(raster, mode, levels, scheme, labels, clip_min, clip_max,
         return None
     style_contours(
         contours, with_heatmap=(mode != 'contours'),
-        scheme=scheme, labels=labels, width=line_width,
+        scheme=scheme, labels=labels, width=line_width, invert=invert,
     )
     keep_private(contours)
     return contours
@@ -1297,41 +1447,63 @@ def _build_isolines(raster, mode, levels, scheme, labels, clip_min, clip_max,
 
 def build_pair(point_layer, radius, pixel, kernel, mode, levels, opacity,
                scheme='viridis', labels=False, clip_min=None, clip_max=None,
-               fill='bands', line_width=0.15):
+               fill='bands', line_width=0.15, for_paper=False, invert=False):
     """Return (styled KDE raster, isolines). Fill is never a polygon layer."""
     need_raster = mode in ('heatmap', 'contours', 'both')
-    raster = build_heatmap(point_layer, radius, pixel, kernel) if need_raster else None
+    raster = (
+        build_heatmap(point_layer, radius, pixel, kernel, for_paper=for_paper)
+        if need_raster else None
+    )
     if raster is None:
         return None, None
     keep_private(raster)
     fill = 'cloud' if fill == 'cloud' else 'bands'
+    invert = bool(invert)
     if mode in ('heatmap', 'both'):
         style_heatmap(
             raster, opacity=opacity, scheme=scheme, levels=levels,
-            clip_min=clip_min, clip_max=clip_max, fill=fill,
+            clip_min=clip_min, clip_max=clip_max, fill=fill, invert=invert,
         )
     contours = _build_isolines(
         raster, mode, levels, scheme, labels, clip_min, clip_max, line_width,
+        invert=invert,
     )
     return raster, contours
 
 
+def build_paper_pair(point_layer, radius, pixel, kernel, mode, levels, opacity,
+                     scheme='viridis', labels=False, clip_min=None, clip_max=None,
+                     fill='bands', line_width=0.15, invert=False):
+    """Paper-resolution density product: same semantics as build_pair, finer grid.
+
+    Skips the interactive ~720-cell clamp. Caller should pass ``pixel`` from
+    :func:`paper_pixel` so the KDE sampling matches the PNG output size.
+    """
+    return build_pair(
+        point_layer, radius, pixel, kernel, mode, levels, opacity,
+        scheme=scheme, labels=labels, clip_min=clip_min, clip_max=clip_max,
+        fill=fill, line_width=line_width, for_paper=True, invert=invert,
+    )
+
+
 def restyle_pair(raster, contours, mode, levels, opacity, scheme='viridis',
                  labels=False, clip_min=None, clip_max=None, fill='bands',
-                 line_width=0.15):
+                 line_width=0.15, invert=False):
     """Reclassify the KDE raster and rebuild isolines. No KDE recompute."""
     if raster is None:
         release_private(contours)
         return None, None
     fill = 'cloud' if fill == 'cloud' else 'bands'
+    invert = bool(invert)
     if mode in ('heatmap', 'both'):
         style_heatmap(
             raster, opacity=opacity, scheme=scheme, levels=levels,
-            clip_min=clip_min, clip_max=clip_max, fill=fill,
+            clip_min=clip_min, clip_max=clip_max, fill=fill, invert=invert,
         )
     release_private(contours)
     new_ctr = _build_isolines(
         raster, mode, levels, scheme, labels, clip_min, clip_max, line_width,
+        invert=invert,
     )
     return raster, new_ctr
 
@@ -1341,15 +1513,38 @@ def release_pair(raster, contours=None):
     release_private(raster)
 
 
+def _legend_fmt(val):
+    try:
+        v = float(val)
+    except (TypeError, ValueError):
+        return ''
+    if not math.isfinite(v):
+        return ''
+    return '%d' % int(round(v))
+
+
+def _equal_bounds(vmin, vmax, n_classes):
+    """n_classes colour steps → n_classes+1 edges from vmin to vmax."""
+    n = max(2, int(n_classes))
+    span = float(vmax) - float(vmin)
+    return [float(vmin) + span * (i / float(n)) for i in range(n + 1)]
+
+
 def heatmap_legend(rlayer):
-    """(vmin, vmax, solid colours low→high) from the styled KDE raster, or None."""
+    """(vmin, vmax, colours low→high, bounds) from the styled KDE raster.
+
+    ``bounds`` has len(colours)+1 edges so each colour change can be labelled.
+    """
     if rlayer is None:
         return None
     fill = 'bands'
     scheme = DEFAULT_SCHEME
+    levels_n = 8
+    invert = False
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         fill = rlayer.customProperty('arsysplotqgis_fill') or fill
         scheme = rlayer.customProperty('arsysplotqgis_scheme') or scheme
+        invert = str(rlayer.customProperty('arsysplotqgis_invert') or '0') == '1'
     try:
         rend = rlayer.renderer()
         shader = rend.shader()
@@ -1358,49 +1553,94 @@ def heatmap_legend(rlayer):
     except Exception:
         items = []
         rend = None
+    try:
+        vmin = float(rend.classificationMin())
+        vmax = float(rend.classificationMax())
+    except Exception:
+        vmin = vmax = None
     if str(fill) == 'cloud':
-        rng = _clip_range(rlayer)
-        if rng is None:
-            return None
-        vmin, vmax = rng
-        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-            vmin = float(rend.classificationMin())
-            vmax = float(rend.classificationMax())
+        if vmin is None or vmax is None or vmax <= vmin:
+            rng = _clip_range(rlayer)
+            if rng is None:
+                return None
+            vmin, vmax = rng
         if vmax <= vmin:
             return None
-        colors = [color_at(i / 23.0, scheme) for i in range(24)]
-        return vmin, vmax, colors
+        # Smooth ramp; annotate at Isolines-equivalent equal breaks.
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            levels_n = _class_count(
+                rlayer.customProperty('arsysplotqgis_levels') or levels_n,
+            )
+        if items:
+            with suppress(Exception):
+                levels_n = max(2, len(items))
+        bounds = _equal_bounds(vmin, vmax, levels_n)
+        colors = [
+            color_at((i + 0.5) / float(levels_n), scheme, invert=invert)
+            for i in range(levels_n)
+        ]
+        return vmin, vmax, colors, bounds
+    # Discrete bands: one colour per class, edges from shader items.
     if not items:
         rng = _clip_range(rlayer)
         if rng is None:
             return None
-        vmin, vmax = rng
-        stops = scheme_stops(scheme)
-        colors = [QColor(r, g, b) for _t, r, g, b in stops]
-        return vmin, vmax, colors
-    items.sort(key=lambda it: float(it.value))
+        if vmin is None or vmax is None or vmax <= vmin:
+            vmin, vmax = rng
+        n = max(2, len(scheme_stops(scheme)))
+        colors = [
+            color_at((i + 0.5) / float(n), scheme, invert=invert)
+            for i in range(n)
+        ]
+        bounds = _equal_bounds(vmin, vmax, len(colors))
+        return vmin, vmax, colors, bounds
+    items.sort(key=lambda it: float(it.value) if math.isfinite(float(it.value)) else 1e300)
     colors = []
+    uppers = []
     for it in items:
         c = QColor(it.color)
         if c.alpha() < 8:
             continue
         c.setAlpha(255)
         colors.append(c)
+        try:
+            uv = float(it.value)
+        except (TypeError, ValueError):
+            uv = float('nan')
+        uppers.append(uv)
     if len(colors) < 2:
         return None
-    try:
-        vmin = float(rend.classificationMin())
-        vmax = float(rend.classificationMax())
-    except Exception:
-        vmin = float(items[0].value)
-        vmax = float(items[-1].value)
+    if vmin is None or not math.isfinite(vmin):
+        vmin = 0.0
+    if vmax is None or not math.isfinite(vmax):
+        finite_u = [u for u in uppers if math.isfinite(u)]
+        vmax = finite_u[-1] if finite_u else vmin + 1.0
     if vmax <= vmin:
         return None
-    return vmin, vmax, colors
+    bounds = [float(vmin)]
+    for i, uv in enumerate(uppers):
+        if math.isfinite(uv):
+            bounds.append(float(uv))
+        else:
+            # Open last class (+inf): close at Max.
+            bounds.append(float(vmax) if i == len(uppers) - 1 else bounds[-1])
+    # Align length: one edge past each colour.
+    while len(bounds) < len(colors) + 1:
+        bounds.append(float(vmax))
+    if len(bounds) > len(colors) + 1:
+        bounds = bounds[:len(colors)] + [float(vmax)]
+    bounds[0] = float(vmin)
+    bounds[-1] = float(vmax)
+    return vmin, vmax, colors, bounds
 
 
-def paint_colorbar(painter, x, top, bottom, vmin, vmax, colors, dpi, ink):
-    """Vertical density ramp. Returns width consumed in pixels."""
+def paint_colorbar(painter, x, top, bottom, vmin, vmax, colors, dpi, ink,
+                   bounds=None):
+    """Vertical density ramp with a label at each colour boundary.
+
+    ``bounds`` if given must be len(colors)+1 edges (low→high). Returns width
+    consumed in pixels. Tick text stays a fixed 7 pt (not the export isoline size).
+    """
     def mm_to_px(mm, dpi=dpi):
         return float(mm) * float(dpi) / 25.4
 
@@ -1409,12 +1649,14 @@ def paint_colorbar(painter, x, top, bottom, vmin, vmax, colors, dpi, ink):
 
     bar_w = mm_to_px(3.4, dpi)
     gap = mm_to_px(1.6, dpi)
-    lab_w = mm_to_px(16, dpi)
+    lab_w = mm_to_px(18, dpi)
     h = bottom - top
     if h < 8 or not colors:
         return 0
-    painter.setPen(QPen(ink, max(1.0, mm_to_px(0.16, dpi))))
     n = len(colors)
+    if bounds is None or len(bounds) != n + 1:
+        bounds = _equal_bounds(vmin, vmax, n)
+    painter.setPen(QPen(ink, max(1.0, mm_to_px(0.16, dpi))))
     sl = h / float(max(n, 1))
     for i, c in enumerate(colors):
         y0 = bottom - (i + 1) * sl
@@ -1427,17 +1669,13 @@ def paint_colorbar(painter, x, top, bottom, vmin, vmax, colors, dpi, ink):
     painter.setBrush(Qt.NoBrush)
     lx = x + bar_w + gap
     tick_w = mm_to_px(1.1, dpi)
-    span = float(vmax) - float(vmin)
-    ticks = []
-    for t in (0.0, 0.25, 0.5, 0.75, 1.0):
-        val = float(vmin) + t * span
-        if vmax <= 1.5 and vmin >= -0.05:
-            lab = '%.2f' % val
-        else:
-            lab = '%.3g' % val
-        ticks.append((t, lab))
-    for t, lab in ticks:
+    # Label every colour edge (n+1 ticks).
+    for i, val in enumerate(bounds):
+        t = i / float(n) if n else 0.0
         yy = bottom - t * h
+        lab = _legend_fmt(val)
+        if not lab:
+            continue
         painter.setPen(QPen(ink, max(1.0, mm_to_px(0.16, dpi))))
         painter.drawLine(
             int(round(x + bar_w)), int(round(yy)),
@@ -1449,7 +1687,7 @@ def paint_colorbar(painter, x, top, bottom, vmin, vmax, colors, dpi, ink):
             lab,
         )
     painter.save()
-    painter.translate(lx + mm_to_px(11.5, dpi), (top + bottom) / 2.0)
+    painter.translate(lx + mm_to_px(13.5, dpi), (top + bottom) / 2.0)
     painter.rotate(-90)
     font.setBold(True)
     painter.setFont(font)
