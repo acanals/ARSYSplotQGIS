@@ -45,6 +45,7 @@ from . import density as D
 from . import export_dialog as E
 from . import importer
 from . import layers as L
+from . import style_file as SF
 from . import view3d
 from .colors_util import css_hex
 
@@ -58,6 +59,9 @@ from .axes_grid import (
     AxesGridOverlay,
     paint_paper_axes,
     paint_paper_legend,
+    paper_legend_below_height_mm,
+    paper_legend_plan,
+    paper_legend_side_width_mm,
     snap_world_rect,
 )
 
@@ -109,18 +113,33 @@ THEMES = {
 UI_THEME = dict(THEMES['dark'])
 DARK = UI_THEME['canvas']
 INK = UI_THEME['ink']
-TOOLTIP_CSS = (
-    'QToolTip { background-color:#fff8ee; color:#1a1816;'
-    '  border:1px solid #8a8178; padding:4px 7px; font-size:10px; }'
-)
+
+
+def tooltip_css():
+    """High-contrast tooltips for the active theme (readable in Dark)."""
+    t = UI_THEME
+    # Opaque panel + ink; avoid system dark palette wiping the text colour.
+    bg = t.get('panel', '#161411')
+    ink = t.get('ink', '#fff5e6')
+    border = t.get('btn_border', '#3a342e')
+    return (
+        'QToolTip { background-color:%s; color:%s; border:1px solid %s;'
+        '  padding:4px 7px; font-size:10px; }'
+        % (bg, ink, border)
+    )
+
+
+TOOLTIP_CSS = tooltip_css()
 
 
 def _set_ui_theme(name):
     """Swap the active palette used by stylesheets and hand-painted chrome."""
-    global UI_THEME, DARK, INK
+    global UI_THEME, DARK, INK, TOOLTIP_CSS
     UI_THEME = dict(THEMES['light' if name == 'light' else 'dark'])
     DARK = UI_THEME['canvas']
     INK = UI_THEME['ink']
+    TOOLTIP_CSS = tooltip_css()
+    L.set_tooltip_ink(UI_THEME['ink'])
 
 
 def compact_btn_css():
@@ -1094,11 +1113,8 @@ class PlotPane(QWidget):
 
         margin = 10.0
         pad_l, pad_r, pad_t, pad_b = 18.0, 7.0, 5.0, 22.0
-        extra_r = 0.0
-        if want_colorbar:
-            extra_r += 26.0
-        if show_groups:
-            extra_r += 24.0
+        # Gap plot → side legend/colorbar (mm).
+        side_gap_mm = 18.0
         head_mm = 0.0
         if title:
             head_mm += 8.0
@@ -1118,6 +1134,26 @@ class PlotPane(QWidget):
         inner_h_mm = max(inner_h_mm, 28.0)
         plot_w = max(1, int(round(E.mm_to_px(inner_w_mm, dpi))))
         plot_h = max(1, int(round(E.mm_to_px(inner_h_mm, dpi))))
+        legend_plan = None
+        if show_groups:
+            legend_plan = paper_legend_plan(
+                groups, group_field, plot_h, plot_w, dpi,
+            )
+        # Side legend only when one column fits; else below (no wide short exports).
+        extra_r = 0.0
+        extra_b = 0.0
+        if want_colorbar:
+            extra_r += 26.0
+        if legend_plan and legend_plan.get('place') == 'side':
+            extra_r += paper_legend_side_width_mm(legend_plan, dpi)
+            if want_colorbar:
+                extra_r += 3.0
+        elif legend_plan and legend_plan.get('place') == 'below':
+            extra_b += paper_legend_below_height_mm(legend_plan, dpi)
+        if want_colorbar or (
+            legend_plan and legend_plan.get('place') == 'side'
+        ):
+            extra_r += side_gap_mm - 4.5
         left = int(round(E.mm_to_px(margin + pad_l, dpi)))
         top = int(round(E.mm_to_px(margin + head_mm + pad_t, dpi)))
         right = left + plot_w
@@ -1132,7 +1168,7 @@ class PlotPane(QWidget):
             xmin, xmax = cx - need_w / 2.0, cx + need_w / 2.0
 
         out_w = int(round(E.mm_to_px(margin * 2 + pad_r + extra_r, dpi))) + right
-        out_h = int(round(E.mm_to_px(margin + pad_b, dpi))) + bottom
+        out_h = int(round(E.mm_to_px(margin + pad_b + extra_b, dpi))) + bottom
         img = QImage(out_w, out_h, QImage.Format_ARGB32)
         E.apply_png_dpi(img, dpi)
         img.fill(bg)
@@ -1240,12 +1276,17 @@ class PlotPane(QWidget):
                     self.canvas.render(painter)
                 painter.restore()
 
+                z_stretch = 1.0
+                with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                    if self.v_axis == 'z' and self.overlay is not None:
+                        z_stretch = float(self.overlay.z_stretch())
                 paint_paper_axes(
                     painter, left, top, right, bottom,
                     xmin, xmax, ymin, ymax,
                     self.h_axis, self.v_axis, self.h_label, self.v_label, dpi,
+                    z_stretch=z_stretch,
                 )
-                side_x = right + E.mm_to_px(4.5, dpi)
+                side_x = right + E.mm_to_px(side_gap_mm, dpi)
                 if bar is not None:
                     if len(bar) >= 4:
                         vmin, vmax, colors, bounds = bar[:4]
@@ -1257,10 +1298,21 @@ class PlotPane(QWidget):
                         bounds=bounds,
                     )
                     side_x += used + E.mm_to_px(3.0, dpi)
-                if show_groups:
-                    paint_paper_legend(
-                        painter, groups, group_field, side_x, top, bottom, dpi, ink
-                    )
+                if show_groups and legend_plan is not None:
+                    if legend_plan.get('place') == 'below':
+                        leg_top = bottom + E.mm_to_px(pad_b, dpi)
+                        leg_bottom = leg_top + float(legend_plan['total_h'])
+                        paint_paper_legend(
+                            painter, groups, group_field,
+                            left, leg_top, leg_bottom, dpi, ink,
+                            plan=legend_plan,
+                        )
+                    else:
+                        paint_paper_legend(
+                            painter, groups, group_field,
+                            side_x, top, bottom, dpi, ink,
+                            plan=legend_plan,
+                        )
             finally:
                 painter.end()
         finally:
@@ -1336,6 +1388,9 @@ class ZoomWindow(QMainWindow):
         self.pane = PlotPane(
             pane.title, pane.h_axis, pane.v_axis, pane.h_label, pane.v_label
         )
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            if pane.v_axis == 'z' and getattr(pane, 'overlay', None) is not None:
+                self.pane.overlay.set_z_stretch(pane.overlay.z_stretch())
         root = QWidget()
         col = QVBoxLayout(root)
         col.setContentsMargins(8, 8, 8, 8)
@@ -1442,6 +1497,22 @@ class ARSYSDock(QMainWindow):
         self._force_close = False
         self.point_size = 2.2
         self.point_shape = L.DEFAULT_MARKER
+        self._style_book = None
+        self._style_shapes = {}
+        self.z_stretch_on = False
+        self.z_stretch_factor = 2.0
+        self._z_stretch_busy = False
+        self._z_stretch_pending = False
+        self._z_stretch_timer = QTimer(self)
+        self._z_stretch_timer.setSingleShot(True)
+        self._z_stretch_timer.timeout.connect(self._rebuild_sections_for_stretch)
+        self.cross_hover_on = False
+        self._hover_xyz = None  # (x, y, z) real metres of highlighted record
+        self._hover_source_pane = None
+        self._hover_pending = None  # (pane, px, py) for throttled hit-test
+        self._hover_timer = QTimer(self)
+        self._hover_timer.setSingleShot(True)
+        self._hover_timer.timeout.connect(self._run_hover_pending)
         self.arrow_size = L.ARROW_MM_DEFAULT
         self.density_on = False
         self.density_mode = 'heatmap'
@@ -1618,6 +1689,7 @@ class ARSYSDock(QMainWindow):
             getattr(self, 'btn_all', None),
             getattr(self, 'btn_none', None),
             getattr(self, 'btn_reset', None),
+            getattr(self, 'btn_z_stretch_reset', None),
             getattr(self, 'btn_3d', None),
         ):
             if btn is not None:
@@ -1650,6 +1722,8 @@ class ARSYSDock(QMainWindow):
         for sw in (
             getattr(self, 'chk_dark', None),
             getattr(self, 'chk_adaptive', None),
+            getattr(self, 'chk_z_stretch', None),
+            getattr(self, 'chk_cross_hover', None),
             getattr(self, 'chk_density', None),
             getattr(self, 'chk_dens_labels', None),
             getattr(self, 'chk_dens_invert', None),
@@ -1757,6 +1831,25 @@ class ARSYSDock(QMainWindow):
         gcol.addWidget(QLabel('Field'))
         gcol.addWidget(self.cmb_group)
         gcol.addLayout(row)
+        style_row = QHBoxLayout()
+        style_row.setSpacing(4)
+        self.btn_style = QPushButton('Load style…')
+        self.btn_style.setToolTip(L.html_tooltip(
+            'Load a **personal style** text file: colours and Point models',
+            'per group value. Sections match **Field** names; a flat list',
+            'applies to the active field. See **sample_style.txt**.',
+        ))
+        self.btn_style.clicked.connect(self.load_style_file)
+        self.btn_style_clear = QPushButton('Clear')
+        self.btn_style_clear.setToolTip(L.html_tooltip(
+            'Drop the loaded style book and restore auto / layer colours',
+            'with the current Point model.',
+        ))
+        self.btn_style_clear.clicked.connect(self.clear_style_file)
+        self.btn_style_clear.setEnabled(False)
+        style_row.addWidget(self.btn_style, 1)
+        style_row.addWidget(self.btn_style_clear)
+        gcol.addLayout(style_row)
         gcol.addWidget(scroll, 1)
         col.addWidget(gbox, 1)
 
@@ -1778,7 +1871,8 @@ class ARSYSDock(QMainWindow):
         if idx >= 0:
             self.cmb_point_shape.setCurrentIndex(idx)
         self.cmb_point_shape.setToolTip(L.html_tooltip(
-            '**Point model** — marker shape for all points (plan and sections).',
+            '**Point model** — default marker for values without a style shape.',
+            'A loaded style file can set a shape per group value.',
         ))
         self.cmb_point_shape.currentIndexChanged.connect(self._on_point_shape)
         shape_row.addWidget(self.cmb_point_shape, 1)
@@ -2115,6 +2209,8 @@ class ARSYSDock(QMainWindow):
         dcol.addLayout(op_row)
         ocol.addWidget(dens_box)
 
+        foot = QHBoxLayout()
+        foot.setSpacing(6)
         self.btn_reset = QPushButton('Reset')
         self.btn_reset.setToolTip(L.html_tooltip(
             '**Reset view:** all groups, full XYZ range, default sizes,',
@@ -2123,16 +2219,16 @@ class ARSYSDock(QMainWindow):
         ))
         self.btn_reset.clicked.connect(self.reset_view)
         self.btn_reset.setEnabled(False)
-        ocol.addWidget(self.btn_reset)
-        col.addWidget(opt)
-
+        foot.addWidget(self.btn_reset, 1)
         self.btn_3d = QPushButton('Open 3D view')
         self.btn_3d.setToolTip(L.html_tooltip(
             'Orbit the cloud in a separate window. Not QGIS 3D (avoids 3.40 crashes).',
         ))
         self.btn_3d.clicked.connect(self.open_3d)
         self.btn_3d.setEnabled(False)
-        col.addWidget(self.btn_3d)
+        foot.addWidget(self.btn_3d, 1)
+        ocol.addLayout(foot)
+        col.addWidget(opt)
         col.addStretch(0)
         return side
 
@@ -2162,13 +2258,68 @@ class ARSYSDock(QMainWindow):
         fbox.addWidget(self.rng_z)
         btn_reset = QPushButton('Reset')
         btn_reset.setToolTip(L.html_tooltip(
-            '**Reset view:** all groups, full XYZ range, default sizes,',
-            'Draw → Points, Adaptive off, and **re-fit** the three canvases.',
-            'Does not change Density settings or Dark/Light.',
+            '**Reset Filter:** restore full **X / Y / Z** ranges only.',
+            'Does not change Point size, Draw, groups, Density or Stretch Z.',
         ))
-        btn_reset.clicked.connect(self.reset_view)
+        btn_reset.clicked.connect(self.reset_xyz_filter)
         fbox.addWidget(btn_reset)
         fl.addWidget(self._filter_box)
+        # Stretch Z — longitudinal / transversal only (plan stays isotropic).
+        stretch_box = QGroupBox('Stretch Z')
+        scol = QVBoxLayout(stretch_box)
+        scol.setContentsMargins(8, 10, 8, 8)
+        scol.setSpacing(4)
+        self.chk_z_stretch = ToggleSwitch('On')
+        self.chk_z_stretch.setToolTip(L.html_tooltip(
+            '**Stretch Z** on Longitudinal and Transversal views only.',
+            'Same factor on both; the look differs if X and Y spans differ',
+            '(long trench vs narrow width). Plan stays isotropic.',
+            'Affects screen, zoom and PNG export. Labels = **real** Z (m).',
+        ))
+        self.chk_z_stretch.toggled.connect(self._on_z_stretch_toggled)
+        scol.addWidget(self.chk_z_stretch)
+        stretch_row = QHBoxLayout()
+        stretch_row.setSpacing(4)
+        stretch_row.addWidget(QLabel('Factor'))
+        self.spn_z_stretch = QDoubleSpinBox()
+        self.spn_z_stretch.setRange(1.0, 50.0)
+        self.spn_z_stretch.setSingleStep(0.5)
+        self.spn_z_stretch.setDecimals(1)
+        self.spn_z_stretch.setValue(2.0)
+        self.spn_z_stretch.setEnabled(False)
+        self.spn_z_stretch.setToolTip(L.html_tooltip(
+            'Vertical exaggeration. **1** = true scale;',
+            '**2** = Z drawn twice as tall as X/Y, etc.',
+        ))
+        self.spn_z_stretch.valueChanged.connect(self._on_z_stretch_factor)
+        stretch_row.addWidget(self.spn_z_stretch, 1)
+        self.btn_z_stretch_reset = QPushButton('Reset')
+        self.btn_z_stretch_reset.setEnabled(False)
+        self.btn_z_stretch_reset.setToolTip(L.html_tooltip(
+            'Set Factor back to **1** (true vertical scale).',
+        ))
+        self.btn_z_stretch_reset.clicked.connect(self._on_z_stretch_reset)
+        stretch_row.addWidget(self.btn_z_stretch_reset)
+        scol.addLayout(stretch_row)
+        # Cross-view hover: highlight the same record on the other two panes.
+        hover_box = QGroupBox('Cross-view')
+        hcol = QVBoxLayout(hover_box)
+        hcol.setContentsMargins(8, 10, 8, 8)
+        hcol.setSpacing(4)
+        self.chk_cross_hover = ToggleSwitch('On')
+        self.chk_cross_hover.setToolTip(L.html_tooltip(
+            'Point under the mouse is marked on the **other two** projections',
+            '(plan ↔ longitudinal ↔ transversal). Same record, blue ring.',
+            'Main panes only — not Zoom windows or density.',
+        ))
+        self.chk_cross_hover.toggled.connect(self._on_cross_hover_toggled)
+        hcol.addWidget(self.chk_cross_hover)
+        hcol.addStretch(1)
+        stretch_hover = QHBoxLayout()
+        stretch_hover.setSpacing(6)
+        stretch_hover.addWidget(stretch_box, 1)
+        stretch_hover.addWidget(hover_box, 1)
+        fl.addLayout(stretch_hover)
         # 2) Below: content that appears / disappears (e.g. density scale)
         self._resources_dynamic = QWidget()
         dyn = QVBoxLayout(self._resources_dynamic)
@@ -2206,6 +2357,7 @@ class ARSYSDock(QMainWindow):
         grid.setRowStretch(1, 1)
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
+        self._wire_cross_hover()
         return stage
 
     def schedule_filter(self):
@@ -2514,6 +2666,95 @@ class ARSYSDock(QMainWindow):
             L.copy_renderer(self.line_layer, self.trans_line_layer)
         self.schedule_filter()
 
+    def _style_maps(self):
+        """Colour / shape maps from the loaded book for the active group field."""
+        book = getattr(self, '_style_book', None)
+        if not book:
+            return {}, {}
+        return SF.maps_for_field(book, self.group_field)
+
+    def _restyle_points(self, values=None):
+        """Apply colours + per-value shapes to the source layer."""
+        if self.source is None:
+            return
+        if values is None:
+            values = (
+                list(self._group_btns)
+                if getattr(self, '_group_btns', None)
+                else L.unique_groups(self.source, self.group_field)
+            )
+        style_cmap, style_shapes = self._style_maps()
+        self._style_shapes = dict(style_shapes)
+        cmap_base = dict(getattr(self, '_imported_cmap', None) or {})
+        cmap_base.update(style_cmap)
+        self.colors = L.style_by_group(
+            self.source, self.group_field, size=self.point_size,
+            values=values, cmap=cmap_base or None,
+            shape=self._point_shape(),
+            shapes=style_shapes or None,
+        )
+
+    def load_style_file(self):
+        start = PLUGIN_DIR
+        book = getattr(self, '_style_book', None)
+        if book and book.get('path'):
+            start = os.path.dirname(book['path']) or PLUGIN_DIR
+        path, _flt = QFileDialog.getOpenFileName(
+            self,
+            'Load group style',
+            start,
+            'Style text (*.txt *.style *.csv);;All files (*)',
+        )
+        if not path:
+            return
+        try:
+            book = SF.load_style_file(path)
+        except (OSError, UnicodeError, ValueError, TypeError) as exc:
+            QMessageBox.warning(self, 'Style', str(exc))
+            return
+        self._style_book = book
+        self.btn_style_clear.setEnabled(True)
+        if self.source is not None:
+            self._rebuild_group_buttons()
+            self._set_all_groups(True)
+            if self.line_layer is not None:
+                L.style_lines_by_group(
+                    self.line_layer, self.group_field,
+                    width=self._line_width(), head=self.arrow_size, cmap=self.colors,
+                )
+                L.copy_renderer(self.line_layer, self.long_line_layer)
+                L.copy_renderer(self.line_layer, self.trans_line_layer)
+            self.schedule_filter()
+        msg = SF.summary_message(book, self.group_field if self.source else None)
+        warns = list(book.get('warnings') or [])
+        self.iface.messageBar().pushInfo('ARSYSplotQGIS', msg)
+        if warns:
+            preview = '\n'.join(warns[:12])
+            if len(warns) > 12:
+                preview += '\n… (%d more)' % (len(warns) - 12)
+            QMessageBox.information(
+                self, 'Style warnings',
+                '%s\n\n%s' % (msg, preview),
+            )
+
+    def clear_style_file(self):
+        self._style_book = None
+        self._style_shapes = {}
+        self.btn_style_clear.setEnabled(False)
+        if self.source is None:
+            return
+        self._rebuild_group_buttons()
+        self._set_all_groups(True)
+        if self.line_layer is not None:
+            L.style_lines_by_group(
+                self.line_layer, self.group_field,
+                width=self._line_width(), head=self.arrow_size, cmap=self.colors,
+            )
+            L.copy_renderer(self.line_layer, self.long_line_layer)
+            L.copy_renderer(self.line_layer, self.trans_line_layer)
+        self.schedule_filter()
+        self.iface.messageBar().pushInfo('ARSYSplotQGIS', 'Style cleared.')
+
     def _rebuild_group_buttons(self):
         while self.group_layout.count():
             item = self.group_layout.takeAt(0)
@@ -2525,18 +2766,17 @@ class ARSYSDock(QMainWindow):
         if not self.source:
             return
         values = L.unique_groups(self.source, self.group_field)
-        imported = getattr(self, '_imported_cmap', None) or {}
-        self.colors = L.style_by_group(
-            self.source, self.group_field, size=self.point_size,
-            values=values, cmap=imported or None,
-            shape=self._point_shape(),
-        )
+        self._restyle_points(values)
         self._group_btns = {}
         for i, val in enumerate(values):
             btn = QPushButton(val)
             btn.setCheckable(True)
             btn.setChecked(True)
-            btn.setToolTip(L.html_tooltip(val))
+            tip = val
+            sh = (getattr(self, '_style_shapes', None) or {}).get(val)
+            if sh:
+                tip = '%s · %s' % (val, sh)
+            btn.setToolTip(L.html_tooltip(tip))
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             color = self.colors.get(val, QColor('#888'))
             hexcol = css_hex(color)
@@ -2589,6 +2829,14 @@ class ARSYSDock(QMainWindow):
         self.rng_y.reset(notify=False)
         self.rng_z.reset(notify=False)
 
+    def reset_xyz_filter(self):
+        """Filter panel Reset: full XYZ only (not Point size / Draw / groups)."""
+        if not self.source:
+            return
+        self._filter_timer.stop()
+        self.reset_ranges()
+        self._apply_filters_now()
+
     def reset_view(self):
         if not self.source:
             return
@@ -2615,12 +2863,7 @@ class ARSYSDock(QMainWindow):
                 btn.blockSignals(False)
             self.active_groups = set(self._group_btns)
         self.reset_ranges()
-        L.style_by_group(
-            self.source, self.group_field, size=self.point_size,
-            cmap=self.colors,
-            values=list(self._group_btns) if getattr(self, '_group_btns', None) else None,
-            shape=self._point_shape(),
-        )
+        self._restyle_points()
         self._apply_filters_now()
         # Force the same enquadram as first load (adaptive fit), even though
         # the Adaptive switch stays Off. Deferred once: density/setLayers can
@@ -2772,19 +3015,21 @@ class ARSYSDock(QMainWindow):
         if not getattr(self, '_group_btns', None):
             groups = None
         L.apply_subset(self.source, groups, ranges, self.group_field)
+        self._clear_cross_hover()
         if getattr(self, '_group_btns', None) and self.colors:
-            L.style_by_group(
-                self.source, self.group_field, size=self.point_size,
-                cmap=self.colors, values=list(self._group_btns),
-                shape=self._point_shape(),
-            )
-        L.rebuild_section(self.source, self.long_layer, 'long')
-        L.rebuild_section(self.source, self.trans_layer, 'trans')
+            self._restyle_points(list(self._group_btns))
+        z_s = self._z_stretch()
+        L.rebuild_section(self.source, self.long_layer, 'long', z_stretch=z_s)
+        L.rebuild_section(self.source, self.trans_layer, 'trans', z_stretch=z_s)
         L.copy_renderer(self.source, self.long_layer)
         L.copy_renderer(self.source, self.trans_layer)
         nvec = L.rebuild_vectors(self.source, self.line_layer)
-        L.rebuild_section_lines(self.source, self.long_line_layer, 'long')
-        L.rebuild_section_lines(self.source, self.trans_line_layer, 'trans')
+        L.rebuild_section_lines(
+            self.source, self.long_line_layer, 'long', z_stretch=z_s,
+        )
+        L.rebuild_section_lines(
+            self.source, self.trans_line_layer, 'trans', z_stretch=z_s,
+        )
         L.style_lines_by_group(
             self.line_layer, self.group_field,
             width=self._line_width(),
@@ -2808,6 +3053,333 @@ class ARSYSDock(QMainWindow):
             display_mode=self._draw_mode_for_3d(),
             arrow_size=self.arrow_size,
         )
+        self._sync_z_stretch_overlays()
+
+    def _z_stretch(self):
+        """Effective Z exaggeration for section panes (1 = isotropic)."""
+        on = bool(getattr(self, 'z_stretch_on', False))
+        if getattr(self, 'chk_z_stretch', None) is not None:
+            on = bool(self.chk_z_stretch.isChecked())
+        if not on:
+            return 1.0
+        spn = getattr(self, 'spn_z_stretch', None)
+        if spn is not None:
+            return L._clamp_z_stretch(spn.value())
+        return L._clamp_z_stretch(getattr(self, 'z_stretch_factor', 2.0))
+
+    def _sync_z_stretch_overlays(self):
+        stretch = self._z_stretch()
+        for pane in (
+            getattr(self, 'longp', None),
+            getattr(self, 'transp', None),
+        ):
+            if pane is None:
+                continue
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                pane.overlay.set_z_stretch(stretch)
+        # Plan stays isotropic.
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            if getattr(self, 'plan', None) is not None:
+                self.plan.overlay.set_z_stretch(1.0)
+        for win in list(getattr(self, '_zoom_windows', {}).values()):
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                if getattr(win.pane, 'v_axis', None) == 'z':
+                    win.pane.overlay.set_z_stretch(stretch)
+                else:
+                    win.pane.overlay.set_z_stretch(1.0)
+
+    def _schedule_z_stretch_rebuild(self, delay_ms=180):
+        """Debounce Stretch Factor; density rebuild is slow and re-entrant via processEvents."""
+        timer = getattr(self, '_z_stretch_timer', None)
+        if timer is None:
+            self._rebuild_sections_for_stretch()
+            return
+        timer.start(max(0, int(delay_ms)))
+
+    def _rebuild_sections_for_stretch(self):
+        """Reproject XZ/YZ layers and re-fit section views after stretch change.
+
+        Density is built from the stretched section layers. A nested call while
+        ``_qgis_busy`` pumps events (spin Factor fast) must not rebuild points
+        under an in-flight KDE — that leaves density and markers vertically
+        separated. Busy+pending keeps one coherent pass, then re-runs if needed.
+        """
+        if getattr(self, '_z_stretch_busy', False):
+            self._z_stretch_pending = True
+            return
+        timer = getattr(self, '_z_stretch_timer', None)
+        if timer is not None:
+            timer.stop()
+        if self.source is None:
+            self._sync_z_stretch_overlays()
+            return
+        self._z_stretch_busy = True
+        self._z_stretch_pending = False
+        try:
+            # Snapshot stretch for this pass; Factor may change under processEvents.
+            z_s = self._z_stretch()
+            L.rebuild_section(self.source, self.long_layer, 'long', z_stretch=z_s)
+            L.rebuild_section(self.source, self.trans_layer, 'trans', z_stretch=z_s)
+            L.copy_renderer(self.source, self.long_layer)
+            L.copy_renderer(self.source, self.trans_layer)
+            L.rebuild_section_lines(
+                self.source, self.long_line_layer, 'long', z_stretch=z_s,
+            )
+            L.rebuild_section_lines(
+                self.source, self.trans_line_layer, 'trans', z_stretch=z_s,
+            )
+            L.copy_renderer(self.line_layer, self.long_line_layer)
+            L.copy_renderer(self.line_layer, self.trans_line_layer)
+            self._sync_z_stretch_overlays()
+            self._clear_cross_hover()
+            dens = getattr(self, '_density_timer', None)
+            if dens is not None:
+                dens.stop()
+            if self.density_on:
+                self._rebuild_density(refresh=False)
+            # Re-fit section panes so exaggerated Z fills the frame.
+            # Must use _pane_layers (includes density) — _pane_draw_layers alone
+            # would drop the LONG/TRANS KDE after a stretch change.
+            for pane in (self.longp, self.transp):
+                with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                    pane.show_layer(
+                        self._pane_layers(pane), adaptive=True,
+                        fit_from=self._pane_fit_layers(pane),
+                    )
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                adaptive = bool(
+                    getattr(self, 'chk_adaptive', None)
+                    and self.chk_adaptive.isChecked()
+                )
+                self.plan.show_layer(
+                    self._pane_layers(self.plan), adaptive=adaptive,
+                    fit_from=self._pane_fit_layers(self.plan),
+                )
+            for win in list(getattr(self, '_zoom_windows', {}).values()):
+                with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                    if getattr(win.pane, 'v_axis', None) == 'z':
+                        win._fit()
+            if abs(self._z_stretch() - z_s) > 1e-9:
+                self._z_stretch_pending = True
+        finally:
+            self._z_stretch_busy = False
+            if getattr(self, '_z_stretch_pending', False):
+                self._z_stretch_pending = False
+                # Coalesce rapid Factor spins into one follow-up rebuild.
+                self._schedule_z_stretch_rebuild(60)
+
+    def _on_z_stretch_toggled(self, on):
+        self.z_stretch_on = bool(on)
+        spn = getattr(self, 'spn_z_stretch', None)
+        if spn is not None:
+            spn.setEnabled(bool(on))
+        btn = getattr(self, 'btn_z_stretch_reset', None)
+        if btn is not None:
+            btn.setEnabled(bool(on))
+        # Toggle applies immediately (busy guard still protects density).
+        self._rebuild_sections_for_stretch()
+
+    def _on_z_stretch_factor(self, value):
+        self.z_stretch_factor = L._clamp_z_stretch(value)
+        if not getattr(self, 'z_stretch_on', False):
+            if getattr(self, 'chk_z_stretch', None) is not None:
+                if not self.chk_z_stretch.isChecked():
+                    return
+            else:
+                return
+        # Debounce: spinning Factor while density is on must not nest rebuilds.
+        if getattr(self, '_z_stretch_busy', False):
+            self._z_stretch_pending = True
+            return
+        self._schedule_z_stretch_rebuild(180)
+
+    def _on_z_stretch_reset(self):
+        spn = getattr(self, 'spn_z_stretch', None)
+        if spn is None:
+            return
+        spn.setValue(1.0)
+
+    def _wire_cross_hover(self):
+        """Bind main-pane overlays to throttled hover hit-testing."""
+        for pane in (
+            getattr(self, 'plan', None),
+            getattr(self, 'longp', None),
+            getattr(self, 'transp', None),
+        ):
+            if pane is None or getattr(pane, 'overlay', None) is None:
+                continue
+            ov = pane.overlay
+
+            def _move(px, py, p=pane):
+                self._queue_cross_hover(p, px, py)
+
+            def _leave(p=pane):
+                self._on_cross_hover_leave(p)
+
+            ov._hover_move = _move
+            ov._hover_leave = _leave
+
+    def _on_cross_hover_toggled(self, on):
+        self.cross_hover_on = bool(on)
+        if not self.cross_hover_on:
+            self._clear_cross_hover()
+
+    def _queue_cross_hover(self, pane, px, py):
+        if not getattr(self, 'cross_hover_on', False):
+            return
+        if getattr(self, 'chk_cross_hover', None) is not None:
+            if not self.chk_cross_hover.isChecked():
+                return
+        self._hover_pending = (pane, float(px), float(py))
+        timer = getattr(self, '_hover_timer', None)
+        if timer is not None and not timer.isActive():
+            timer.start(40)
+
+    def _run_hover_pending(self):
+        pending = getattr(self, '_hover_pending', None)
+        self._hover_pending = None
+        if not pending:
+            return
+        if not getattr(self, 'cross_hover_on', False):
+            return
+        pane, px, py = pending
+        self._apply_cross_hover_at(pane, px, py)
+
+    def _on_cross_hover_leave(self, pane):
+        if self._hover_source_pane is pane or self._hover_xyz is not None:
+            self._clear_cross_hover()
+
+    def _clear_cross_hover(self):
+        self._hover_xyz = None
+        self._hover_source_pane = None
+        self._hover_pending = None
+        timer = getattr(self, '_hover_timer', None)
+        if timer is not None:
+            timer.stop()
+        for pane in (
+            getattr(self, 'plan', None),
+            getattr(self, 'longp', None),
+            getattr(self, 'transp', None),
+        ):
+            if pane is None or getattr(pane, 'overlay', None) is None:
+                continue
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                pane.overlay.set_cross_hover(None, None, None)
+
+    def _pane_map_xy(self, pane, px, py):
+        """Pixel → map coordinates on the pane canvas."""
+        canvas = getattr(pane, 'canvas', None)
+        if canvas is None:
+            return None
+        xform = canvas.getCoordinateTransform()
+        if xform is None:
+            return None
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            pt = xform.toMapCoordinates(int(round(px)), int(round(py)))
+            return float(pt.x()), float(pt.y())
+        return None
+
+    def _hover_tol_map(self, pane, px_tol=10.0):
+        canvas = getattr(pane, 'canvas', None)
+        if canvas is None:
+            return 0.25
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            mupp = float(canvas.mapUnitsPerPixel())
+            if mupp > 0:
+                return mupp * float(px_tol)
+        return 0.25
+
+    def _hit_source_xyz(self, pane, map_x, map_y):
+        """Nearest filtered source point under the cursor for this pane."""
+        src = self.source
+        if src is None or src.featureCount() < 1:
+            return None
+        stretch = 1.0
+        key = None
+        if pane is getattr(self, 'plan', None):
+            key = 'plan'
+        elif pane is getattr(self, 'longp', None):
+            key = 'long'
+            stretch = self._z_stretch()
+        elif pane is getattr(self, 'transp', None):
+            key = 'trans'
+            stretch = self._z_stretch()
+        else:
+            return None
+        tol = self._hover_tol_map(pane)
+        tol2 = tol * tol
+        best = None
+        best_d2 = tol2
+        for feat in src.getFeatures():
+            geom = feat.geometry()
+            if geom is None or geom.isEmpty():
+                continue
+            pt = geom.constGet()
+            _ok = False
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                x = float(pt.x())
+                y = float(pt.y())
+                z = float(pt.z()) if pt.is3D() else 0.0
+                _ok = True
+            if not _ok:
+                continue
+            if key == 'plan':
+                d2 = (x - map_x) ** 2 + (y - map_y) ** 2
+            elif key == 'long':
+                d2 = (x - map_x) ** 2 + (z * stretch - map_y) ** 2
+            else:
+                d2 = (y - map_x) ** 2 + (z * stretch - map_y) ** 2
+            if d2 <= best_d2:
+                best_d2 = d2
+                best = (x, y, z)
+        return best
+
+    def _hover_map_for_pane(self, pane, xyz):
+        """Real (x,y,z) → map position on this pane (applies Z stretch)."""
+        if xyz is None or pane is None:
+            return None
+        x, y, z = xyz
+        stretch = self._z_stretch()
+        if pane is getattr(self, 'plan', None):
+            return float(x), float(y)
+        if pane is getattr(self, 'longp', None):
+            return float(x), float(z) * stretch
+        if pane is getattr(self, 'transp', None):
+            return float(y), float(z) * stretch
+        return None
+
+    def _apply_cross_hover_at(self, pane, px, py):
+        if self.source is None:
+            self._clear_cross_hover()
+            return
+        # Ignore hover while panning this pane.
+        canvas = getattr(pane, 'canvas', None)
+        if canvas is not None and getattr(canvas, '_pan_last', None) is not None:
+            return
+        map_xy = self._pane_map_xy(pane, px, py)
+        if map_xy is None:
+            self._clear_cross_hover()
+            return
+        hit = self._hit_source_xyz(pane, map_xy[0], map_xy[1])
+        if hit is None:
+            self._clear_cross_hover()
+            return
+        if (
+            self._hover_xyz == hit
+            and self._hover_source_pane is pane
+        ):
+            return
+        self._hover_xyz = hit
+        self._hover_source_pane = pane
+        for other in (self.plan, self.longp, self.transp):
+            if other is None or getattr(other, 'overlay', None) is None:
+                continue
+            mxy = self._hover_map_for_pane(other, hit)
+            if mxy is None:
+                other.overlay.set_cross_hover(None, None, None)
+                continue
+            role = 'here' if other is pane else 'other'
+            other.overlay.set_cross_hover(mxy[0], mxy[1], role)
 
     def _point_shape(self):
         cmb = getattr(self, 'cmb_point_shape', None)
@@ -2821,9 +3393,15 @@ class ARSYSDock(QMainWindow):
         self.point_shape = self._point_shape()
         if self.source is None:
             return
-        L.apply_marker_shape(self.source, self.point_shape)
-        L.apply_marker_shape(self.long_layer, self.point_shape)
-        L.apply_marker_shape(self.trans_layer, self.point_shape)
+        # Rebuild so style-file shapes stay per value; combo is the default only.
+        if getattr(self, '_style_shapes', None) or getattr(self, '_style_book', None):
+            self._restyle_points()
+            L.copy_renderer(self.source, self.long_layer)
+            L.copy_renderer(self.source, self.trans_layer)
+        else:
+            L.apply_marker_shape(self.source, self.point_shape)
+            L.apply_marker_shape(self.long_layer, self.point_shape)
+            L.apply_marker_shape(self.trans_layer, self.point_shape)
         self.plan.canvas.refresh()
         self.longp.canvas.refresh()
         self.transp.canvas.refresh()

@@ -137,12 +137,40 @@ The Group panel controls how the archaeological data is classified and displayed
 - **Coloured chips** — one for each unique attribute value. Click a chip to show or hide that group.
 - **All / None** — quickly enable or disable all groups.
 - **Empty values** — missing or empty attributes are displayed as `(empty)`.
+- **Load style…** — optional personal text file that sets **colour** and **Point model** per group value. **Clear** drops it. Bundled example: `sample_style.txt`.
+
+Style file format (UTF-8):
+
+```
+# comment
+material
+lithic;#c9b896;cross
+bone;#e8dcc8;circle
+
+categoria
+nucli;#5a6b7a;square
+```
+
+A bare line is a **field section** (matched to **Group → Field**, case-insensitive). Lines with `value;colour` or `value;colour;shape` are entries. A flat list (entries before any section) applies to the active field. Unknown shapes fall back to the Options **Point model**; invalid colours are skipped with a warning.
 
 ### XYZ Range
 
 Three double sliders (**X**, **Y** and **Z**) restrict the spatial extent of the displayed data.
 
 The initial limits are calculated from the available coordinates (P1, P2, P3 or geometry).
+
+### Cross-view hover (Resources)
+
+With **Cross-view hover → On**, the point under the mouse on one main pane is marked on the other two (blue ring). Uses the same record in plan, longitudinal and transversal. Zoom windows and density are not involved.
+
+### Stretch Z (Resources)
+
+Exaggerates the vertical axis on **Longitudinal (X/Z)** and **Transversal (Y/Z)** only. The plan stays isotropic.
+
+- **On** — apply the **Factor** (1 = true scale; 2 = Z drawn twice as tall, …).
+- Affects the on-screen sections, zoom windows and PNG export (including density on those panes).
+- Axis tick labels stay in **real metres**; the Z axis title shows the factor (e.g. `Z ×5 (m)`).
+- The 50 cm scale bar uses the horizontal axis only (true map scale).
 
 ### Adaptive Frame
 

@@ -26,6 +26,16 @@ from qgis.PyQt.QtGui import QColor
 
 from .colors_util import color_map, qgis_color
 
+# Ink for rich-text tooltips (dock updates this when the UI theme changes).
+TOOLTIP_INK = '#fff5e6'
+
+
+def set_tooltip_ink(color):
+    global TOOLTIP_INK
+    c = str(color or '').strip()
+    TOOLTIP_INK = c if c else '#fff5e6'
+
+
 def html_tooltip(*parts, width=44):
     """Compact QToolTip: small type, one line break, **bold** markers."""
     lines = []
@@ -39,10 +49,11 @@ def html_tooltip(*parts, width=44):
             lines.append(_tooltip_markup(piece))
     if not lines:
         return ''
+    # Inline colour: Qt rich-text tips often ignore QToolTip stylesheet colour (Dark).
     return (
         '<html><body>'
-        '<p style="margin:0; font-size:10px; line-height:1.2;">%s</p>'
-        '</body></html>' % '<br/>'.join(lines)
+        '<p style="margin:0; font-size:10px; line-height:1.2; color:%s;">%s</p>'
+        '</body></html>' % (TOOLTIP_INK, '<br/>'.join(lines))
     )
 
 
@@ -609,12 +620,48 @@ _MARKER_IDS = {sid for sid, _lab in MARKER_SHAPES}
 _LINE_MARKERS = frozenset({'cross', 'cross2'})
 # Dark rim eats triangle/star tips below this diameter (mm).
 _OUTLINE_SIZE_FLOOR = 2.2
+# Tolerant aliases for style files / typos (cros, start, …).
+_SHAPE_ALIASES = {
+    'cros': 'cross',
+    'cruz': 'cross',
+    '+': 'cross',
+    'plus': 'cross',
+    'x': 'cross2',
+    'cross_2': 'cross2',
+    'crossx': 'cross2',
+    'start': 'star',
+    'estrella': 'star',
+    'tri': 'triangle',
+    'trg': 'triangle',
+    'eq': 'equilateral_triangle',
+    'equilateral': 'equilateral_triangle',
+    'equilateraltriangle': 'equilateral_triangle',
+    'circ': 'circle',
+    'o': 'circle',
+    'sq': 'square',
+    'rect': 'square',
+    'dia': 'diamond',
+    'rhombus': 'diamond',
+    'penta': 'pentagon',
+    'hexa': 'hexagon',
+    'octa': 'octagon',
+}
 
 
-def resolve_marker_shape(name):
-    if name in _MARKER_IDS:
-        return name
-    return DEFAULT_MARKER
+def resolve_marker_shape(name, fallback=DEFAULT_MARKER):
+    """Map UI / file text → marker id. ``fallback=None`` → unknown stays None."""
+    raw = str(name or '').strip()
+    if not raw:
+        return fallback
+    key = raw.lower().replace(' ', '_').replace('-', '_')
+    key = _SHAPE_ALIASES.get(key, key)
+    if key in _MARKER_IDS:
+        return key
+    # Title-case enum leftovers: "Star" / "Cross2"
+    key2 = _SHAPE_ALIASES.get(raw.casefold().replace(' ', '_'), raw.casefold())
+    if key2 in _MARKER_IDS:
+        return key2
+    return fallback
 
 
 def _filled_outline_mm(size_mm):
@@ -781,22 +828,39 @@ def _marker(color, size, shape=None):
     return sym
 
 
+def _shape_for_value(val, default_shape, shapes=None):
+    """Per-category shape from ``shapes`` map, else the global Point model."""
+    default_shape = resolve_marker_shape(default_shape)
+    if not shapes:
+        return default_shape
+    if val in shapes and shapes[val]:
+        return resolve_marker_shape(shapes[val])
+    want = str(val or '').casefold()
+    for key, sid in shapes.items():
+        if str(key or '').casefold() == want and sid:
+            return resolve_marker_shape(sid)
+    return default_shape
+
+
 def style_by_group(layer, field='group', size=2.2, cmap=None, values=None,
-                   shape=None):
+                   shape=None, shapes=None):
+    """Categorised markers. ``shapes`` optional map value → marker id."""
     if layer is None:
         return color_map(values or [], base=cmap)
     values = list(values) if values is not None else unique_groups(layer, field)
     cmap = color_map(values, base=cmap)
     size = max(0.0, float(size))
-    shape = resolve_marker_shape(shape)
+    default_shape = resolve_marker_shape(shape)
+    shapes = dict(shapes) if shapes else {}
     cats = []
     for val in values:
         color = cmap.get(val, QColor('#888888'))
-        cats.append(QgsRendererCategory(val, _marker(color, size, shape), val))
+        sh = _shape_for_value(val, default_shape, shapes)
+        cats.append(QgsRendererCategory(val, _marker(color, size, sh), val))
         if val == EMPTY_LABEL:
             for raw in (NULL, '', None):
                 cats.append(QgsRendererCategory(
-                    raw, _marker(color, size, shape), EMPTY_LABEL,
+                    raw, _marker(color, size, sh), EMPTY_LABEL,
                 ))
     if not cats:
         return cmap
@@ -805,10 +869,13 @@ def style_by_group(layer, field='group', size=2.2, cmap=None, values=None,
         renderer.setClassAttribute(group_class_attr(field))
     if values:
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            sh0 = _shape_for_value(values[0], default_shape, shapes)
             renderer.setSourceSymbol(
-                _marker(cmap.get(values[0], QColor('#888888')), size, shape)
+                _marker(cmap.get(values[0], QColor('#888888')), size, sh0)
             )
     layer.setRenderer(renderer)
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        layer.setCustomProperty('arsysplotqgis_group', str(field or ''))
     layer.triggerRepaint()
     return cmap
 
@@ -1317,10 +1384,27 @@ def make_section_layer(name, crs, fields_template):
     return layer
 
 
-def rebuild_section(source, section, mode):
-    """mode: 'long' → Point(x,z); 'trans' → Point(y,z)."""
+def _clamp_z_stretch(z_stretch):
+    try:
+        s = float(z_stretch)
+    except (TypeError, ValueError):
+        s = 1.0
+    if s < 1.0:
+        s = 1.0
+    if s > 100.0:
+        s = 100.0
+    return s
+
+
+def rebuild_section(source, section, mode, z_stretch=1.0):
+    """mode: 'long' → Point(x,z); 'trans' → Point(y,z).
+
+    ``z_stretch`` > 1 exaggerates Z on section canvases (display metres).
+    Axis labels must divide by the same factor to show real Z.
+    """
     if source is None or section is None:
         return
+    stretch = _clamp_z_stretch(z_stretch)
     prov = section.dataProvider()
     ids = [f.id() for f in section.getFeatures(QgsFeatureRequest().setFlags(QgsFeatureRequest.NoGeometry))]
     if ids:
@@ -1337,24 +1421,28 @@ def rebuild_section(source, section, mode):
             _ok = True
         if not _ok:
             continue
+        z_disp = z * stretch
         if mode == 'long':
-            g = QgsGeometry(QgsPoint(x, z))
+            g = QgsGeometry(QgsPoint(x, z_disp))
         else:
-            g = QgsGeometry(QgsPoint(y, z))
+            g = QgsGeometry(QgsPoint(y, z_disp))
         feat = QgsFeature(section.fields())
         feat.setGeometry(g)
         feat.setAttributes(src.attributes())
         feats.append(feat)
     if feats:
         prov.addFeatures(feats)
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        section.setCustomProperty('arsysplotqgis_z_stretch', '%.6g' % stretch)
     section.updateExtents()
     section.triggerRepaint()
 
 
-def rebuild_section_lines(source, section, mode):
+def rebuild_section_lines(source, section, mode, z_stretch=1.0):
     """Project P2→P3 (or P1→P2) onto XZ or YZ as 2D lines."""
     if source is None or section is None:
         return
+    stretch = _clamp_z_stretch(z_stretch)
     feats = []
     for src in source.getFeatures():
         ends = vector_endpoints(src)
@@ -1362,9 +1450,11 @@ def rebuild_section_lines(source, section, mode):
             continue
         a, b = ends
         if mode == 'long':
-            pa, pb = (a[0], a[2], 0.0), (b[0], b[2], 0.0)
+            pa = (a[0], a[2] * stretch, 0.0)
+            pb = (b[0], b[2] * stretch, 0.0)
         else:
-            pa, pb = (a[1], a[2], 0.0), (b[1], b[2], 0.0)
+            pa = (a[1], a[2] * stretch, 0.0)
+            pb = (b[1], b[2] * stretch, 0.0)
         if _len2(pa, pb) <= VECTOR_EPS * VECTOR_EPS:
             continue
         feat = QgsFeature(section.fields())
@@ -1372,6 +1462,8 @@ def rebuild_section_lines(source, section, mode):
         feat.setAttributes(src.attributes())
         feats.append(feat)
     _replace_features(section, feats)
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        section.setCustomProperty('arsysplotqgis_z_stretch', '%.6g' % stretch)
 
 
 def field_extent(layer, field):

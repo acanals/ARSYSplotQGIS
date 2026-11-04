@@ -1,0 +1,22 @@
+# ARSYSplotQGIS group style book (UTF-8)
+# value;colour;point_model
+# colour: #rrggbb   shape: circle square diamond triangle star cross cross2 …
+# A bare line starts a field section. Flat lines (before any section) apply
+# to whichever Group → Field is selected.
+#
+# Matched to bundled sample.csv (material / categoria).
+
+material
+lithic;#c9b896;cross
+bone;#e8dcc8;circle
+Block;#8a6a4a;square
+charcoal;#3a342e;diamond
+
+categoria
+ascla;#6b8f71;triangle
+esquirla;#7a9e86;triangle
+nucli;#5a6b7a;square
+retoc;#c4a882;star
+fragment ossi;#e8dcc8;circle
+Bloc;#a07850;square
+fragment;#6a645c;diamond

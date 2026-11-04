@@ -3,27 +3,44 @@ name=ARSYSplotQGIS
 qgisMinimumVersion=3.22
 qgisMaximumVersion=3.99
 description=Archaeostratigraphic workspace for excavation XYZ points: plan, sections, group filters, kernel density, PNG export and 3D
-version=0.2.4
+version=0.2.5
 author=Antoni Canals-Salomó (URV IPHES-CERCA)
 email=archesystem@iphes.cat
-about=ARSYSplotQGIS is a QGIS 3 plugin for archaeostratigraphic reading of excavation point clouds.
-    It opens its own window. Plugin layers are not added to the QGIS map canvas or legend.
-    Three linked views: plan (X/Y), longitudinal section (X/Z) and transversal section (Y/Z), plus an optional 3D scatter.
-    Load data with Import CSV (delimiter auto-detected: comma, semicolon, tab or pipe), Load sample, or Use selected layer.
-    Map P1 as the object centre (X, Y, Z). Optionally map P2 and P3 as the two ends of an orientation vector (P2→P3; if P3 is missing, P1→P2).
-    A group field (material, level, …) colours the points. Filter with coloured chips (All / None) and X, Y, Z range sliders.
-    Adaptive frame: Off keeps the full extent; On zooms canvases to the filtered cloud.
-    Draw points (P1), vectors, both, or none. Point size and arrow size apply to all views.
-    Density: kernel-density heatmap and/or isolines of the filtered points (Quartic, Triangular, Uniform, Triweight, Epanechnikov).
-    Min/Max set the colour stretch from the plan peak and apply it to each view’s own peak (plan, X/Z, Y/Z). Below Min is not drawn. Auto uses a 2 percent cut and 100 percent of each local peak.
-    Colour palettes, radius, cell size, isoline count, labels and opacity are adjustable. Density stays inside the plugin.
-    Each view has a zoom window and PNG export (title, subtitle, background, 96–600 dpi) with metre axes, grid, scale bar and legend.
-    3D is a built-in Qt orbit/pan/zoom scatter. It does not use the QGIS 3D engine and needs no extra Python packages.
-    Requires QGIS 3.22 or later (tested on 3.40). Uses only the Python that ships with QGIS, plus the bundled Processing heatmap and contour algorithms.
-    No pip packages, no binaries, no internet connection at runtime.
-    Sample data (sample.csv) is included: p1x, p1y, p1z, material, categoria, taxo, nivell. Use Load sample.
-    Documentation: Help → Plugins → ARSYSplotQGIS, or the README in the code repository (homepage).
-    Licence: GNU GPL-2.0-or-later (required by the QGIS plugin repository).
+about=ARSYSplotQGIS is a QGIS 3 plugin developed as the QGIS counterpart of ARSYSplotLite, part of the ArcheSystem archaeological software suite developed at IPHES-CERCA URV.
+
+    It provides an interactive archaeostratigraphic viewer for exploring and visualising the spatial distribution of archaeological remains recorded during excavation, in plan, vertical sections and 3D.
+
+    WORKSPACE AND VIEWS
+    - Opens in its own workspace, independent of the QGIS map canvas and layer legend.
+    - Three linked 2D views: plan (X/Y), longitudinal section (X/Z) and transversal section (Y/Z).
+    - Optional Stretch Z on the section views (vertical exaggeration; tick labels stay in real metres).
+    - Optional cross-view hover: highlight the same record across the three main panes.
+    - Optional 3D scatter view (X/Y/Z), with orbit, pan and zoom.
+
+    DATA AND FILTERING
+    - Import CSV files (comma, semicolon, tab or pipe delimiters), load sample data or use a selected QGIS point layer.
+    - Map P1 (X, Y, Z) as the object position and optionally P2 → P3 to represent orientation vectors.
+    - Colour points by group field (material, level, category, taxonomy, etc.).
+    - Optional style file to set colour and marker shape per group.
+    - Filter by group and X, Y and Z coordinate ranges.
+    - Adaptive frame to fit the full or filtered dataset.
+
+    DENSITY AND EXPORT
+    - Kernel-density heatmaps and isolines, with five kernel functions.
+    - Adjustable radius, cell size, colour palette, thresholds, isoline count, labels and opacity.
+    - Independent zoom and PNG export for each 2D view, with configurable titles, backgrounds and resolution (96–600 dpi).
+
+    REQUIREMENTS
+    - QGIS 3.22 or later (tested with QGIS 3.40).
+    - Uses the Python environment and Processing algorithms bundled with QGIS.
+    - No additional pip packages, external binaries or internet connection required.
+
+    SAMPLE AND DOCUMENTATION
+    - Includes sample.csv. Select Load sample to explore the plugin.
+    - Documentation: Help → Plugins → ARSYSplotQGIS or the project README (homepage).
+
+    LICENCE
+    GNU GPL-2.0-or-later.
 tracker=https://github.com/acanals/ARSYSplotQGIS/issues
 repository=https://github.com/acanals/ARSYSplotQGIS
 homepage=https://github.com/acanals/ARSYSplotQGIS
@@ -34,12 +51,19 @@ deprecated=False
 hasProcessingProvider=False
 server=False
 tags=archaeology,archaeostratigraphy,excavation,stratigraphy,heatmap,kde,isolines,3d,csv,points,sections
-changelog=0.2.4
+changelog=0.2.5
+    - Resources: Stretch Z on longitudinal/transversal (Factor, Reset); title Z ×N; tick labels stay real metres
+    - Resources: Cross-view hover on the three main panes (linked highlight; Zoom windows excluded)
+    - Optional style file: colour and marker shape per group
+    - PNG export: Legend title and group glyphs; tall legends in columns below the plot; 50 cm B&W scale bar
+    - Filter Reset restores X/Y/Z ranges only (Point size, Draw and groups unchanged)
+    - Stretch Z with Density: keep KDE on the canvases; debounce Factor so density and points stay aligned
+    0.2.4
     - Point model: circle, square, diamond, triangles, polygons, star, cross and X (group colour on stroke for cross/X)
     - Sharper markers at small sizes; Fit on main canvases; Zoom window icon toolbar
     - Use selected layer: import P2/P3 vectors with the same field hints as CSV
     - Density: clearer screen/export fill, isoline labels in pt (level labels only when Density is on)
-    - Archeo palette default light→dense dark; Invert flips the ramp
+    - Archeo palette default dark→cream; Invert flips the ramp
     0.2.3
     - Density Min/Max: one control for plan, X/Z and Y/Z, applied to each view’s own KDE peak (fixes section peak holes)
     - Density fill stays on the styled KDE raster; isolines are lines only
