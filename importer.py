@@ -376,10 +376,10 @@ class ImportCsvDialog(QDialog):
         form.addRow('P3 Z', self.cmb_p3z)
         form.addRow('Group', self.cmb_g)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        btn_open = buttons.addButton('Choose file…', QDialogButtonBox.ActionRole)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btn_open = buttons.addButton('Choose file…', QDialogButtonBox.ButtonRole.ActionRole)
         btn_open.clicked.connect(self._choose)
-        btn_sample = buttons.addButton('Sample data', QDialogButtonBox.ActionRole)
+        btn_sample = buttons.addButton('Sample data', QDialogButtonBox.ButtonRole.ActionRole)
         btn_sample.setToolTip(html_tooltip(
             'Load bundled **sample.csv**. Works from ZIP or repository.',
         ))

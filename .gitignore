@@ -7,3 +7,12 @@ __pycache__/
 dist/
 .idea/
 .vscode/
+# Publisher notes — local only (also excluded from make zip)
+PUBLISH.md
+# SFTP / deploy credentials (also covered by .vscode/; keep explicit)
+sftp.json
+**/sftp.json
+.vscode/sftp.json
+sftp-config.json
+**/sftp-config.json
+

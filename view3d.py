@@ -330,7 +330,7 @@ class CloudWidget(QWidget):
         nseg = len(self._seg_a)
         if not n and not nseg:
             p.setPen(QColor('#444') if paper else QColor('#bbb'))
-            p.drawText(0, 0, w, h, Qt.AlignCenter, 'No points')
+            p.drawText(0, 0, w, h, Qt.AlignmentFlag.AlignCenter, 'No points')
             return
         mvp = self._mvp(w, h)
         items = []
@@ -364,24 +364,24 @@ class CloudWidget(QWidget):
         r = self._radius * scale
         line_w = max(1.0, self._radius * 0.45) * scale
         if self._drag is None:
-            p.setRenderHint(QPainter.Antialiasing, True)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         for item in items:
             if item[1] == 0:
                 _z, _k, ax, ay, bx, by, i = item
                 col = self._seg_cols[i]
-                p.setPen(QPen(col, line_w, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+                p.setPen(QPen(col, line_w, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
                 p.drawLine(QPointF(ax, ay), QPointF(bx, by))
                 head = _arrow_head_polygon(ax, ay, bx, by, self._arrow * scale)
                 if head is not None:
-                    p.setPen(Qt.NoPen)
+                    p.setPen(Qt.PenStyle.NoPen)
                     p.setBrush(QBrush(col))
                     p.drawPolygon(head)
             else:
                 _z, _k, sx, sy, i = item
-                p.setPen(Qt.NoPen)
+                p.setPen(Qt.PenStyle.NoPen)
                 p.setBrush(self._cols[i])
                 p.drawEllipse(QPointF(sx, sy), r, r)
-        p.setBrush(Qt.NoBrush)
+        p.setBrush(Qt.BrushStyle.NoBrush)
         origin = mvp.map(QVector3D(0, 0, 0))
         ox = (origin.x() + 1.0) * 0.5 * w
         oy = (1.0 - origin.y()) * 0.5 * h
@@ -401,9 +401,9 @@ class CloudWidget(QWidget):
 
     def mousePressEvent(self, event):
         self._last = event.pos()
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             self._drag = 'orbit'
-        elif event.button() == Qt.RightButton:
+        elif event.button() == Qt.MouseButton.RightButton:
             self._drag = 'pan'
         else:
             self._drag = None
@@ -482,7 +482,7 @@ class Scatter3DDialog(QDialog):
         bar.addWidget(QLabel('Size'))
         self._size_label = QLabel('%.2f px' % SIZE_PX_DEFAULT)
         self._size_label.setMinimumWidth(48)
-        slider = QSlider(Qt.Horizontal)
+        slider = QSlider(Qt.Orientation.Horizontal)
         slider.setRange(0, SIZE_SLIDER_MAX)
         slider.setSingleStep(1)
         slider.setPageStep(5)
@@ -498,7 +498,7 @@ class Scatter3DDialog(QDialog):
         bar.addWidget(QLabel('Arrow'))
         self._arrow_label = QLabel('%.2f mm' % self._arrow_size)
         self._arrow_label.setMinimumWidth(48)
-        self._arrow_slider = QSlider(Qt.Horizontal)
+        self._arrow_slider = QSlider(Qt.Orientation.Horizontal)
         self._arrow_slider.setRange(0, ARROW_SLIDER_MAX)
         self._arrow_slider.setSingleStep(1)
         self._arrow_slider.setPageStep(5)
@@ -545,8 +545,8 @@ class Scatter3DDialog(QDialog):
         self._group_scroll.setWidgetResizable(True)
         self._group_scroll.setWidget(self._gwrap)
         self._group_scroll.setFixedHeight(42)
-        self._group_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self._group_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._group_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._group_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         filt.addWidget(self._group_scroll, 1)
 
         self.cloud = CloudWidget()
@@ -747,12 +747,12 @@ class Scatter3DDialog(QDialog):
         out_w = max(1, int(round(src_w * scale)))
         out_h = max(1, int(round(src_h * scale)))
         head_h = E.header_height(opts['title'], opts['subtitle'], scale)
-        img = QImage(out_w, out_h + head_h, QImage.Format_ARGB32_Premultiplied)
+        img = QImage(out_w, out_h + head_h, QImage.Format.Format_ARGB32_Premultiplied)
         E.apply_png_dpi(img, dpi)
         img.fill(bg)
         painter = QPainter(img)
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        painter.setRenderHint(QPainter.TextAntialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
         if head_h:
             E.draw_header(
                 painter, out_w, opts['title'], opts['subtitle'], bg, scale

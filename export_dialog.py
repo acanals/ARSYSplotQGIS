@@ -76,7 +76,7 @@ def draw_header(painter, width, title, subtitle, bg, scale):
         painter.setPen(ink)
         painter.drawText(
             QRect(int(12 * scale), y, width - int(24 * scale), int(24 * scale)),
-            Qt.AlignLeft | Qt.AlignVCenter,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
             title,
         )
         y += int(26 * scale)
@@ -87,7 +87,7 @@ def draw_header(painter, width, title, subtitle, bg, scale):
         painter.setPen(ink)
         painter.drawText(
             QRect(int(12 * scale), y, width - int(24 * scale), int(16 * scale)),
-            Qt.AlignLeft | Qt.AlignVCenter,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
             subtitle,
         )
 
@@ -110,7 +110,7 @@ class ExportImageDialog(QDialog):
         self.ed_sub = QLineEdit(subtitle or '')
         self.btn_bg = QPushButton()
         self.btn_bg.setFixedSize(72, 24)
-        self.btn_bg.setCursor(Qt.PointingHandCursor)
+        self.btn_bg.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_bg.clicked.connect(self._pick_bg)
         self._sync_bg_btn()
         bg_row = QHBoxLayout()
@@ -166,7 +166,7 @@ class ExportImageDialog(QDialog):
         hint.setWordWrap(True)
         hint.setStyleSheet('color:#888;')
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
 

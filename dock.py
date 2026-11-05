@@ -167,7 +167,7 @@ def _qgis_busy(text='ARSYSplotQGIS working'):
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         task = QgsScopedProxyProgressTask(text)
     try:
-        with OverrideCursor(Qt.WaitCursor):
+        with OverrideCursor(Qt.CursorShape.WaitCursor):
             QApplication.processEvents()
             yield
     finally:
@@ -181,9 +181,9 @@ def _tune_auto_btn(btn):
     btn.setChecked(True)
     btn.setAutoDefault(False)
     btn.setDefault(False)
-    btn.setFocusPolicy(Qt.NoFocus)
+    btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
     btn.setStyleSheet(compact_btn_css())
-    btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+    btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
 
 
 def _spin_line_css():
@@ -246,17 +246,17 @@ def _fit_clip_spin_width(spn):
 def _tune_clip_spin(spn):
     """Hug content: only digits + +/- . Free row space stays outside the control."""
     spn.setObjectName('arsysClipSpin')
-    spn.setButtonSymbols(QAbstractSpinBox.UpDownArrows)
-    spn.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+    spn.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.UpDownArrows)
+    spn.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
     spn.setDecimals(2)
     spn.setRange(0.0, 1.0e9)
     spn.setKeyboardTracking(False)
-    spn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+    spn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
     spn.setStyleSheet(_clip_spin_css())
     line = spn.lineEdit()
     if line is not None:
         line.setMaxLength(10)
-        line.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        line.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
     _fit_clip_spin_width(spn)
 
 
@@ -268,19 +268,19 @@ def _theme_palette():
     ink = QColor(t['ink'])
     accent = QColor(t['accent'])
     pal = QPalette()
-    pal.setColor(QPalette.Window, bg)
-    pal.setColor(QPalette.WindowText, ink)
-    pal.setColor(QPalette.Base, base)
-    pal.setColor(QPalette.AlternateBase, bg)
-    pal.setColor(QPalette.Text, ink)
-    pal.setColor(QPalette.Button, base)
-    pal.setColor(QPalette.ButtonText, ink)
-    pal.setColor(QPalette.Highlight, accent)
-    pal.setColor(QPalette.HighlightedText, QColor('#fff8ee'))
-    pal.setColor(QPalette.PlaceholderText, QColor(t['disabled']))
+    pal.setColor(QPalette.ColorRole.Window, bg)
+    pal.setColor(QPalette.ColorRole.WindowText, ink)
+    pal.setColor(QPalette.ColorRole.Base, base)
+    pal.setColor(QPalette.ColorRole.AlternateBase, bg)
+    pal.setColor(QPalette.ColorRole.Text, ink)
+    pal.setColor(QPalette.ColorRole.Button, base)
+    pal.setColor(QPalette.ColorRole.ButtonText, ink)
+    pal.setColor(QPalette.ColorRole.Highlight, accent)
+    pal.setColor(QPalette.ColorRole.HighlightedText, QColor('#fff8ee'))
+    pal.setColor(QPalette.ColorRole.PlaceholderText, QColor(t['disabled']))
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-        pal.setColor(QPalette.ToolTipBase, QColor('#fff8ee'))
-        pal.setColor(QPalette.ToolTipText, QColor('#1a1816'))
+        pal.setColor(QPalette.ColorRole.ToolTipBase, QColor('#fff8ee'))
+        pal.setColor(QPalette.ColorRole.ToolTipText, QColor('#1a1816'))
     return pal
 
 
@@ -293,10 +293,10 @@ class ToggleSwitch(QAbstractButton):
     def __init__(self, text='', parent=None):
         super().__init__(parent)
         self.setCheckable(True)
-        self.setCursor(Qt.PointingHandCursor)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setText(text)
-        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        self.setFocusPolicy(Qt.TabFocus)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
 
     def sizeHint(self):
         fm = self.fontMetrics()
@@ -308,7 +308,7 @@ class ToggleSwitch(QAbstractButton):
 
     def paintEvent(self, _event):
         p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         r = self.contentsRect()
         tw, th = self.TRACK_W, self.TRACK_H
         track = QRect(r.right() - tw, r.y() + (r.height() - th) // 2, tw, th)
@@ -317,7 +317,7 @@ class ToggleSwitch(QAbstractButton):
         p.setPen(QColor(t['ink'] if self.isEnabled() else t['disabled']))
         p.drawText(
             QRect(r.x(), r.y(), text_w, r.height()),
-            Qt.AlignVCenter | Qt.AlignLeft,
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
             self.text(),
         )
         on = self.isChecked()
@@ -331,7 +331,7 @@ class ToggleSwitch(QAbstractButton):
         kd = th - 6
         kx = track.right() - 3 - kd if on else track.x() + 3
         ky = track.y() + 3
-        p.setPen(Qt.NoPen)
+        p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QBrush(QColor(t['handle_fill'])))
         p.drawEllipse(kx, ky, kd, kd)
 
@@ -345,7 +345,7 @@ class DensityScaleBar(QWidget):
         self._bounds = []
         self.setMinimumHeight(56)
         self.setMaximumHeight(64)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setToolTip(L.html_tooltip(
             '**Density** colour scale. Each colour step is labelled with its value.',
         ))
@@ -404,8 +404,8 @@ class DensityScaleBar(QWidget):
         t = UI_THEME
         ink = QColor(t['ink'])
         p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing, True)
-        p.setRenderHint(QPainter.TextAntialiasing, True)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
         r = self.contentsRect().adjusted(4, 4, -4, -2)
         lab_h = 18
         gap = 3
@@ -415,7 +415,7 @@ class DensityScaleBar(QWidget):
         bar = QRect(r.x(), r.y(), r.width(), bar_h)
         n = len(self._colors)
         sw = bar.width() / float(max(n, 1))
-        p.setPen(Qt.NoPen)
+        p.setPen(Qt.PenStyle.NoPen)
         for i, c in enumerate(self._colors):
             x0 = bar.x() + int(round(i * sw))
             x1 = bar.x() + int(round((i + 1) * sw))
@@ -424,7 +424,7 @@ class DensityScaleBar(QWidget):
             p.setBrush(QBrush(col))
             p.drawRect(x0, bar.y(), max(1, x1 - x0), bar.height())
         p.setPen(QPen(ink, 1))
-        p.setBrush(Qt.NoBrush)
+        p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawRect(bar)
         font = QFont(self.font())
         font.setPixelSize(10 if n <= 8 else 9)
@@ -437,13 +437,13 @@ class DensityScaleBar(QWidget):
                 continue
             cx = bar.x() + int(round(i * sw))
             if i == 0:
-                align = Qt.AlignLeft | Qt.AlignVCenter
+                align = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
                 rect = QRect(cx, y_lab, max(36, int(sw)), lab_h)
             elif i == n:
-                align = Qt.AlignRight | Qt.AlignVCenter
+                align = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
                 rect = QRect(cx - max(36, int(sw)), y_lab, max(36, int(sw)), lab_h)
             else:
-                align = Qt.AlignHCenter | Qt.AlignVCenter
+                align = Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
                 half = max(20, int(sw))
                 rect = QRect(cx - half, y_lab, half * 2, lab_h)
             p.drawText(rect, align, lab)
@@ -462,7 +462,7 @@ def _themed_icon(filename, ink, size=14):
     ink = str(ink or '#fff5e6')
     raw = raw.replace('#fff5e6', ink).replace('#FFF5E6', ink)
     pm = QPixmap(size, size)
-    pm.fill(Qt.transparent)
+    pm.fill(Qt.GlobalColor.transparent)
     rendered = False
     with suppress(Exception):
         from qgis.PyQt.QtSvg import QSvgRenderer
@@ -501,7 +501,7 @@ def _icon_button(filename, tooltip):
     btn.setIcon(_themed_icon(filename, UI_THEME.get('ink', '#fff5e6'), 14))
     btn.setIconSize(QSize(14, 14))
     btn.setFixedSize(24, 22)
-    btn.setCursor(Qt.PointingHandCursor)
+    btn.setCursor(Qt.CursorShape.PointingHandCursor)
     btn.setToolTip(L.html_tooltip(tooltip))
     btn.setStyleSheet(_pane_icon_btn_css(UI_THEME.get('name') == 'light'))
     return btn
@@ -514,11 +514,11 @@ def _source_icon_button(filename, tooltip, height):
     icon = max(12, min(16, int(height) - 8))
     btn.setIconSize(QSize(icon, icon))
     btn.setFixedHeight(int(height))
-    btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-    btn.setCursor(Qt.PointingHandCursor)
+    btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+    btn.setCursor(Qt.CursorShape.PointingHandCursor)
     btn.setToolTip(L.html_tooltip(tooltip))
     btn.setStyleSheet(compact_btn_css())
-    btn.setFocusPolicy(Qt.TabFocus)
+    btn.setFocusPolicy(Qt.FocusPolicy.TabFocus)
     return btn
 
 
@@ -550,7 +550,7 @@ class DualRangeBar(QWidget):
         self._drag = None
         self.setMinimumHeight(22)
         self.setMinimumWidth(80)
-        self.setCursor(Qt.PointingHandCursor)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
 
     def span(self):
         return self._a, self._b
@@ -571,13 +571,13 @@ class DualRangeBar(QWidget):
 
     def paintEvent(self, _event):
         p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         cy = self.height() // 2
         x0 = self.PAD
         x1 = self.width() - self.PAD
         gy = cy - 3
         t = UI_THEME
-        p.setPen(Qt.NoPen)
+        p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QColor(t['groove']))
         p.drawRoundedRect(QRect(x0, gy, max(x1 - x0, 1), 6), 3, 3)
         xa = int(round(self._t_to_x(self._a)))
@@ -1169,7 +1169,7 @@ class PlotPane(QWidget):
 
         out_w = int(round(E.mm_to_px(margin * 2 + pad_r + extra_r, dpi))) + right
         out_h = int(round(E.mm_to_px(margin + pad_b + extra_b, dpi))) + bottom
-        img = QImage(out_w, out_h, QImage.Format_ARGB32)
+        img = QImage(out_w, out_h, QImage.Format.Format_ARGB32)
         E.apply_png_dpi(img, dpi)
         img.fill(bg)
 
@@ -1209,9 +1209,9 @@ class PlotPane(QWidget):
                             break
 
             painter = QPainter(img)
-            painter.setRenderHint(QPainter.Antialiasing, True)
-            painter.setRenderHint(QPainter.TextAntialiasing, True)
-            painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
             try:
                 y = E.mm_to_px(margin, dpi)
                 if title:
@@ -1226,7 +1226,7 @@ class PlotPane(QWidget):
                             out_w - int(E.mm_to_px(margin * 2, dpi)),
                             int(E.mm_to_px(7.5, dpi)),
                         ),
-                        Qt.AlignLeft | Qt.AlignVCenter,
+                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                         title,
                     )
                     y += E.mm_to_px(8.0, dpi)
@@ -1243,7 +1243,7 @@ class PlotPane(QWidget):
                             out_w - int(E.mm_to_px(margin * 2, dpi)),
                             int(E.mm_to_px(5.2, dpi)),
                         ),
-                        Qt.AlignLeft | Qt.AlignVCenter,
+                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                         subtitle,
                     )
 
@@ -1360,8 +1360,8 @@ class ZoomWindow(QMainWindow):
         self._force_close = False
         self._layer = layer
         self.setWindowTitle('ARSYSplotQGIS · Zoom · %s' % pane.title)
-        self.setWindowFlag(Qt.Window, True)
-        self.setFocusPolicy(Qt.StrongFocus)
+        self.setWindowFlag(Qt.WindowType.Window, True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.resize(1100, 800)
         self.setMinimumSize(520, 400)
         bar = QHBoxLayout()
@@ -1461,7 +1461,7 @@ class ZoomWindow(QMainWindow):
             self.pane.canvas.fit_data_extent(ext)
 
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Escape:
+        if event.key() == Qt.Key.Key_Escape:
             self.close()
             return
         super().keyPressEvent(event)
@@ -1541,12 +1541,12 @@ class ARSYSDock(QMainWindow):
         self.setWindowTitle('ARSYSplotQGIS')
         self.setObjectName('ARSYSplotQGISWindow')
         self.setWindowIcon(QIcon(os.path.join(PLUGIN_DIR, 'ArcheIcon.png')))
-        self.setWindowFlag(Qt.Window, True)
+        self.setWindowFlag(Qt.WindowType.Window, True)
         self.resize(1280, 840)
         self.setMinimumSize(720, 520)
 
         self._root = QWidget()
-        split = QSplitter(Qt.Horizontal)
+        split = QSplitter(Qt.Orientation.Horizontal)
         split.addWidget(self._make_side())
         split.addWidget(self._make_stage())
         split.setStretchFactor(0, 0)
@@ -1740,7 +1740,7 @@ class ARSYSDock(QMainWindow):
         title_row = QHBoxLayout()
         title_row.setSpacing(6)
         self._title_lab = QLabel('ARSYSplot<strong>QGIS</strong>')
-        self._title_lab.setTextFormat(Qt.RichText)
+        self._title_lab.setTextFormat(Qt.TextFormat.RichText)
         self._title_lab.setStyleSheet('font-size:16px;')
         title_row.addWidget(self._title_lab, 1)
         self.chk_dark = ToggleSwitch('Dark')
@@ -1760,15 +1760,15 @@ class ARSYSDock(QMainWindow):
 
         src_row = QHBoxLayout()
         src_row.setSpacing(4)
-        src_row.setAlignment(Qt.AlignVCenter)
+        src_row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         self._lab_load = QLabel('Load\nData')
         self._lab_load.setObjectName('arsysLoadDataLabel')
-        self._lab_load.setAlignment(Qt.AlignCenter)
+        self._lab_load.setAlignment(Qt.AlignmentFlag.AlignCenter)
         font = QFont()
         font.setPixelSize(12)
         self._lab_load.setFont(font)
         self._lab_load.setAutoFillBackground(False)
-        self._lab_load.setAttribute(Qt.WA_TranslucentBackground, True)
+        self._lab_load.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         fm = self._lab_load.fontMetrics()
         try:
             text_w = max(fm.horizontalAdvance('Load'), fm.horizontalAdvance('Data'))
@@ -1879,7 +1879,7 @@ class ARSYSDock(QMainWindow):
         ocol.addLayout(shape_row)
         size_row = QHBoxLayout()
         size_row.addWidget(QLabel('Point size'))
-        self.sld_size = QSlider(Qt.Horizontal)
+        self.sld_size = QSlider(Qt.Orientation.Horizontal)
         self.sld_size.setRange(0, 40)
         self.sld_size.setSingleStep(1)
         self.sld_size.setPageStep(5)
@@ -1898,7 +1898,7 @@ class ARSYSDock(QMainWindow):
         ocol.addLayout(size_row)
         arrow_row = QHBoxLayout()
         arrow_row.addWidget(QLabel('Arrow size'))
-        self.sld_arrow = QSlider(Qt.Horizontal)
+        self.sld_arrow = QSlider(Qt.Orientation.Horizontal)
         self.sld_arrow.setRange(0, L.ARROW_SLIDER_MAX)
         self.sld_arrow.setSingleStep(1)
         self.sld_arrow.setPageStep(5)
@@ -1930,7 +1930,7 @@ class ARSYSDock(QMainWindow):
             self.btn_draw_both, self.btn_draw_none,
         ):
             btn.setCheckable(True)
-            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             btn.setStyleSheet(compact_btn_css())
             self._draw_group.addButton(btn)
         self.btn_draw_points.setChecked(True)
@@ -1983,7 +1983,7 @@ class ARSYSDock(QMainWindow):
         ):
             btn.setCheckable(True)
             btn.setEnabled(False)
-            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             btn.setStyleSheet(compact_btn_css())
             self._dens_mode_group.addButton(btn)
             btn.clicked.connect(lambda _on, m=mode: self._set_density_mode(m))
@@ -2006,8 +2006,8 @@ class ARSYSDock(QMainWindow):
         lbl_width = QLabel('Line width')
         lbl_width.setToolTip(width_tip)
         width_row.addWidget(lbl_width)
-        self.sld_dens_width = QSlider(Qt.Horizontal)
-        self.sld_dens_width.setOrientation(Qt.Horizontal)
+        self.sld_dens_width = QSlider(Qt.Orientation.Horizontal)
+        self.sld_dens_width.setOrientation(Qt.Orientation.Horizontal)
         self.sld_dens_width.setRange(0, 100)
         self.sld_dens_width.setValue(15)
         self.sld_dens_width.setMinimumHeight(22)
@@ -2033,7 +2033,7 @@ class ARSYSDock(QMainWindow):
         ):
             btn.setCheckable(True)
             btn.setEnabled(False)
-            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             btn.setStyleSheet(compact_btn_css())
             self._dens_fill_group.addButton(btn)
             btn.clicked.connect(lambda _on, f=fill: self._set_density_fill(f))
@@ -2073,7 +2073,7 @@ class ARSYSDock(QMainWindow):
         self.lbl_dens_max = QLabel('Max')
         for lab in (self.lbl_dens_min, self.lbl_dens_max):
             lab.setStyleSheet('font-size:10px;')
-            lab.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            lab.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         # Compact clusters: [Min + spin] … [Max + spin] … Auto
         # Spins hug digits+arrows; slack is only between clusters.
         rng_row.addWidget(self.lbl_dens_min, 0)
@@ -2195,7 +2195,7 @@ class ARSYSDock(QMainWindow):
         lbl_op = QLabel('Opacity')
         lbl_op.setToolTip(op_tip)
         op_row.addWidget(lbl_op)
-        self.sld_dens_op = QSlider(Qt.Horizontal)
+        self.sld_dens_op = QSlider(Qt.Orientation.Horizontal)
         self.sld_dens_op.setRange(20, 100)
         self.sld_dens_op.setValue(70)
         self.sld_dens_op.setEnabled(False)
@@ -2343,9 +2343,9 @@ class ARSYSDock(QMainWindow):
         inv_lay = QVBoxLayout(inv_col)
         inv_lay.setContentsMargins(0, 4, 0, 0)
         inv_lay.setSpacing(0)
-        inv_lay.addWidget(self.chk_dens_invert, 0, Qt.AlignTop)
+        inv_lay.addWidget(self.chk_dens_invert, 0, Qt.AlignmentFlag.AlignTop)
         inv_lay.addStretch(1)
-        scale_row.addWidget(inv_col, 0, Qt.AlignTop)
+        scale_row.addWidget(inv_col, 0, Qt.AlignmentFlag.AlignTop)
         dyn.addWidget(self._dens_scale_row)
         fl.addWidget(self._resources_dynamic)
         fl.addStretch(1)
@@ -2446,7 +2446,7 @@ class ARSYSDock(QMainWindow):
                 continue
             if not self._layer_switch_on(lyr):
                 continue
-            if QgsWkbTypes.geometryType(lyr.wkbType()) != QgsWkbTypes.PointGeometry:
+            if QgsWkbTypes.geometryType(lyr.wkbType()) != QgsWkbTypes.GeometryType.PointGeometry:
                 continue
             out.append(lyr)
         return out
@@ -2534,7 +2534,7 @@ class ARSYSDock(QMainWindow):
                 'Use selected layer.',
             )
             return
-        if QgsWkbTypes.geometryType(layer.wkbType()) != QgsWkbTypes.PointGeometry:
+        if QgsWkbTypes.geometryType(layer.wkbType()) != QgsWkbTypes.GeometryType.PointGeometry:
             QMessageBox.warning(self, 'Layer', 'Need a point layer.')
             return
         try:
@@ -2777,7 +2777,7 @@ class ARSYSDock(QMainWindow):
             if sh:
                 tip = '%s · %s' % (val, sh)
             btn.setToolTip(L.html_tooltip(tip))
-            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             color = self.colors.get(val, QColor('#888'))
             hexcol = css_hex(color)
             btn.setStyleSheet(

@@ -58,6 +58,7 @@ changelog=0.2.5
     - PNG export: Legend title and group glyphs; tall legends in columns below the plot; 50 cm B&W scale bar
     - Filter Reset restores X/Y/Z ranges only (Point size, Draw and groups unchanged)
     - Stretch Z with Density: keep KDE on the canvases; debounce Factor so density and points stay aligned
+    - Qt6-ready enums (scoped form; still runs on Qt5 / QGIS 3.x)
     0.2.4
     - Point model: circle, square, diamond, triangles, polygons, star, cross and X (group colour on stroke for cross/X)
     - Sharper markers at small sizes; Fit on main canvases; Zoom window icon toolbar

@@ -744,7 +744,7 @@ def _measure_raster_limits(rlayer, lower_frac=0.02):
         stats_min = None
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             stats = provider.bandStatistics(
-                1, QgsRasterBandStats.Min | QgsRasterBandStats.Max,
+                1, QgsRasterBandStats.Stats.Min | QgsRasterBandStats.Stats.Max,
                 extent, 0,
             )
             stats_max = float(stats.maximumValue)
@@ -955,9 +955,9 @@ def style_heatmap(rlayer, opacity=0.7, scheme='viridis', levels=8,
         fn = QgsColorRampShader()
         if fill == 'cloud':
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-                fn.setColorRampType(QgsColorRampShader.Interpolated)
+                fn.setColorRampType(QgsColorRampShader.Type.Interpolated)
         else:
-            fn.setColorRampType(QgsColorRampShader.Discrete)
+            fn.setColorRampType(QgsColorRampShader.Type.Discrete)
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 fn.setClassificationMode(
                     QgsColorRampShader.ClassificationMode.EqualInterval,
@@ -1232,8 +1232,6 @@ def _label_placement_line():
         from qgis.core import Qgis
         return Qgis.LabelPlacement.Line
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-        return QgsPalLayerSettings.Line
-    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         return QgsPalLayerSettings.Placement.Line
     return None
 
@@ -1330,7 +1328,7 @@ def style_contour_labels(layer, on=False, size_pt=None):
     fmt = QgsTextFormat()
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         fmt.setSize(pt)
-        fmt.setSizeUnit(QgsUnitTypes.RenderPoints)
+        fmt.setSizeUnit(QgsUnitTypes.RenderUnit.RenderPoints)
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         font = QFont()
         font.setBold(False)
@@ -1363,12 +1361,12 @@ def _line_symbol(color, width):
     draw_c = QColor(0, 0, 0, 0) if invisible else QColor(color)
     sl = QgsSimpleLineSymbolLayer(draw_c, draw_w)
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-        sl.setWidthUnit(QgsUnitTypes.RenderMillimeters)
+        sl.setWidthUnit(QgsUnitTypes.RenderUnit.RenderMillimeters)
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-        sl.setPenCapStyle(Qt.RoundCap)
-        sl.setPenJoinStyle(Qt.RoundJoin)
+        sl.setPenCapStyle(Qt.PenCapStyle.RoundCap)
+        sl.setPenJoinStyle(Qt.PenJoinStyle.RoundJoin)
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-        sl.setPenStyle(Qt.NoPen if invisible else Qt.SolidLine)
+        sl.setPenStyle(Qt.PenStyle.NoPen if invisible else Qt.PenStyle.SolidLine)
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         if invisible:
             sl.setColor(QColor(0, 0, 0, 0))
@@ -1380,7 +1378,7 @@ def _line_symbol(color, width):
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         sym.setColor(draw_c)
         sym.setWidth(draw_w)
-        sym.setWidthUnit(QgsUnitTypes.RenderMillimeters)
+        sym.setWidthUnit(QgsUnitTypes.RenderUnit.RenderMillimeters)
         sym.setOpacity(0.0 if invisible else 1.0)
     return sym
 
@@ -1666,7 +1664,7 @@ def paint_colorbar(painter, x, top, bottom, vmin, vmax, colors, dpi, ink,
     font.setPixelSize(pt_to_px(7, dpi))
     painter.setFont(font)
     painter.setPen(ink)
-    painter.setBrush(Qt.NoBrush)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
     lx = x + bar_w + gap
     tick_w = mm_to_px(1.1, dpi)
     # Label every colour edge (n+1 ticks).
@@ -1683,7 +1681,7 @@ def paint_colorbar(painter, x, top, bottom, vmin, vmax, colors, dpi, ink,
         )
         painter.drawText(
             QRectF(lx, yy - mm_to_px(2.1, dpi), lab_w, mm_to_px(4.2, dpi)),
-            Qt.AlignLeft | Qt.AlignVCenter,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
             lab,
         )
     painter.save()
@@ -1693,7 +1691,7 @@ def paint_colorbar(painter, x, top, bottom, vmin, vmax, colors, dpi, ink,
     painter.setFont(font)
     painter.drawText(
         QRectF(-mm_to_px(28, dpi), -mm_to_px(4, dpi), mm_to_px(56, dpi), mm_to_px(5, dpi)),
-        Qt.AlignCenter,
+        Qt.AlignmentFlag.AlignCenter,
         'Density',
     )
     painter.restore()

@@ -51,9 +51,9 @@ def draw_legend_marker(painter, cx, cy, r, shape, color):
     cx, cy, r = float(cx), float(cy), max(1.2, float(r))
 
     if shape in ('cross', 'cross2'):
-        stroke = QPen(fill, max(1.0, r * 0.38), Qt.SolidLine, Qt.FlatCap, Qt.MiterJoin)
+        stroke = QPen(fill, max(1.0, r * 0.38), Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap, Qt.PenJoinStyle.MiterJoin)
         painter.setPen(stroke)
-        painter.setBrush(Qt.NoBrush)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
         if shape == 'cross':
             painter.drawLine(QPointF(cx - r, cy), QPointF(cx + r, cy))
             painter.drawLine(QPointF(cx, cy - r), QPointF(cx, cy + r))
@@ -62,7 +62,7 @@ def draw_legend_marker(painter, cx, cy, r, shape, color):
             painter.drawLine(QPointF(cx - r, cy + r), QPointF(cx + r, cy - r))
         return
 
-    painter.setPen(QPen(rim, pen_w, Qt.SolidLine, Qt.SquareCap, Qt.MiterJoin))
+    painter.setPen(QPen(rim, pen_w, Qt.PenStyle.SolidLine, Qt.PenCapStyle.SquareCap, Qt.PenJoinStyle.MiterJoin))
     painter.setBrush(fill)
 
     if shape == 'square':
@@ -326,7 +326,7 @@ def paint_paper_axes(
     tick_w = max(1.0, mm_to_px(0.22, dpi))
     tick_len = mm_to_px(1.6, dpi)
 
-    painter.setRenderHint(QPainter.Antialiasing, True)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     painter.setPen(QPen(GRID_PAPER, grid_w))
     for tick in h_ticks:
         x = sx(tick)
@@ -366,7 +366,7 @@ def paint_paper_axes(
         painter.drawText(
             QRectF(x - mm_to_px(10, dpi), bottom + tick_len + mm_to_px(0.4, dpi),
                    mm_to_px(20, dpi), lab_h),
-            Qt.AlignHCenter | Qt.AlignTop,
+            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
             _fmt(tick, h_step, h_axis),
         )
     for map_y, lab_v in v_pairs:
@@ -376,7 +376,7 @@ def paint_paper_axes(
         painter.drawText(
             QRectF(left - mm_to_px(17, dpi), y - lab_h / 2.0,
                    mm_to_px(15.2, dpi), lab_h),
-            Qt.AlignRight | Qt.AlignVCenter,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
             _fmt(lab_v, v_step, v_axis),
         )
 
@@ -385,7 +385,7 @@ def paint_paper_axes(
     painter.setPen(TITLE_PAPER)
     painter.drawText(
         QRectF(left, bottom + mm_to_px(6.2, dpi), pw, mm_to_px(5, dpi)),
-        Qt.AlignHCenter | Qt.AlignTop,
+        Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
         '%s (m)' % h_label,
     )
     painter.save()
@@ -393,7 +393,7 @@ def paint_paper_axes(
     painter.rotate(-90)
     painter.drawText(
         QRectF(-mm_to_px(28, dpi), -mm_to_px(4, dpi), mm_to_px(56, dpi), mm_to_px(5, dpi)),
-        Qt.AlignCenter,
+        Qt.AlignmentFlag.AlignCenter,
         _z_axis_title(v_label, z_stretch),
     )
     painter.restore()
@@ -414,14 +414,14 @@ def paint_paper_axes(
         painter.setBrush(fill)
         painter.drawRect(QRectF(sx0, by, seg_px, bh))
     painter.setPen(rim)
-    painter.setBrush(Qt.NoBrush)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
     painter.drawRect(QRectF(bx, by, bar_px, bh))
     font.setPixelSize(pt_to_px(7, dpi))
     painter.setFont(font)
     painter.setPen(LABEL_PAPER)
     painter.drawText(
         QRectF(bx, by + bh + mm_to_px(0.4, dpi), max(bar_px, mm_to_px(18, dpi)), lab_h),
-        Qt.AlignLeft | Qt.AlignTop,
+        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
         '50 cm',
     )
 
@@ -547,7 +547,7 @@ def paint_paper_legend(painter, items, field, x, top, bottom, dpi, ink, plan=Non
     heading = field or 'Legend'
     painter.drawText(
         QRectF(x, top, total_w, row_h),
-        Qt.AlignLeft | Qt.AlignVCenter,
+        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
         heading,
     )
     ly0 = top + head_h
@@ -573,13 +573,13 @@ def paint_paper_legend(painter, items, field, x, top, bottom, dpi, ink, plan=Non
         cy = ly + row_h / 2.0
         draw_legend_marker(painter, lx + r + 1.0, cy, r, shape, color)
         painter.setPen(ink)
-        painter.setBrush(Qt.NoBrush)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
         label = name
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-            label = metrics.elidedText(str(name), Qt.ElideRight, int(text_w))
+            label = metrics.elidedText(str(name), Qt.TextElideMode.ElideRight, int(text_w))
         painter.drawText(
             QRectF(lx + text_x0, ly, text_w, row_h),
-            Qt.AlignLeft | Qt.AlignVCenter,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
             label,
         )
     return float(total_w)
@@ -593,11 +593,11 @@ class AxesGridOverlay(QWidget):
         self.v_axis = v_axis
         self.h_label = h_label
         self.v_label = v_label
-        self.setAttribute(Qt.WA_TranslucentBackground, True)
-        self.setAttribute(Qt.WA_NoSystemBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
         self.setAutoFillBackground(False)
         self.setStyleSheet('background: transparent;')
-        self.setCursor(Qt.ArrowCursor)
+        self.setCursor(Qt.CursorShape.ArrowCursor)
         self.setMouseTracking(True)
         self._paper = False
         self._paper_bg = QColor('#ffffff')
@@ -656,7 +656,7 @@ class AxesGridOverlay(QWidget):
         event.ignore()
 
     def mousePressEvent(self, event):
-        if event.button() not in (Qt.LeftButton, Qt.MiddleButton):
+        if event.button() not in (Qt.MouseButton.LeftButton, Qt.MouseButton.MiddleButton):
             event.ignore()
             return
         canvas = self.canvas
@@ -665,7 +665,7 @@ class AxesGridOverlay(QWidget):
             return
         pos = event.position() if hasattr(event, 'position') else event.pos()
         canvas.pan_start(pos.x(), pos.y())
-        self.setCursor(Qt.ClosedHandCursor)  # drag; idle cursor is Arrow
+        self.setCursor(Qt.CursorShape.ClosedHandCursor)  # drag; idle cursor is Arrow
         event.accept()
 
     def mouseMoveEvent(self, event):
@@ -688,7 +688,7 @@ class AxesGridOverlay(QWidget):
         canvas = self.canvas
         if canvas is not None and hasattr(canvas, 'pan_end'):
             canvas.pan_end()
-        self.setCursor(Qt.ArrowCursor)
+        self.setCursor(Qt.CursorShape.ArrowCursor)
         event.accept()
 
     def leaveEvent(self, event):
@@ -879,8 +879,8 @@ class AxesGridOverlay(QWidget):
             else:
                 grid, axis, label, title = GRID, AXIS, LABEL, TITLE
 
-        p.setRenderHint(QPainter.Antialiasing, True)
-        p.setPen(Qt.NoPen)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(margin)
         p.drawRect(QRectF(0, 0, w, top + 1))
         p.drawRect(QRectF(0, bottom - 1, w, h - bottom + 1))
@@ -927,7 +927,7 @@ class AxesGridOverlay(QWidget):
                 continue
             p.drawText(
                 QRectF(x - 28, bottom + 7, 56, 16),
-                Qt.AlignHCenter | Qt.AlignTop,
+                Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
                 _fmt(tick, h_step, self.h_axis),
             )
         for map_y, lab_v in v_pairs:
@@ -936,14 +936,14 @@ class AxesGridOverlay(QWidget):
                 continue
             p.drawText(
                 QRectF(28, y - 8, left - 36, 16),
-                Qt.AlignRight | Qt.AlignVCenter,
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                 _fmt(lab_v, v_step, self.v_axis),
             )
 
         p.setPen(title)
         p.drawText(
             QRectF(left, bottom + 30, right - left, 18),
-            Qt.AlignHCenter | Qt.AlignTop,
+            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
             '%s (m)' % self.h_label,
         )
         p.save()
@@ -951,7 +951,7 @@ class AxesGridOverlay(QWidget):
         p.rotate(-90)
         p.drawText(
             QRectF(-80, -10, 160, 20),
-            Qt.AlignCenter,
+            Qt.AlignmentFlag.AlignCenter,
             _z_axis_title(self.v_label, self.z_stretch()),
         )
         p.restore()
@@ -973,14 +973,14 @@ class AxesGridOverlay(QWidget):
         r = 11.0
         stroke = QColor(30, 144, 255)
         fill = QColor(30, 144, 255, 55)
-        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         if role == 'here':
             p.setPen(QPen(stroke, 2.0))
             p.setBrush(fill)
             p.drawEllipse(QPointF(cx, cy), r, r)
         else:
             p.setPen(QPen(stroke, 2.2))
-            p.setBrush(Qt.NoBrush)
+            p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawEllipse(QPointF(cx, cy), r, r)
             # Small crosshair inside the ring.
             arm = r * 0.55
@@ -1017,8 +1017,8 @@ class AxesGridOverlay(QWidget):
         metrics = p.fontMetrics()
         p.drawText(
             QRectF(lx, ly, max_w, 10),
-            Qt.AlignLeft | Qt.AlignVCenter,
-            metrics.elidedText(heading, Qt.ElideRight, max_w),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            metrics.elidedText(heading, Qt.TextElideMode.ElideRight, max_w),
         )
         ly += 12
         font.setBold(False)
@@ -1036,17 +1036,17 @@ class AxesGridOverlay(QWidget):
             cy = ly + row_h / 2.0
             draw_legend_marker(p, lx + 4.0, cy, 3.0, shape, color)
             p.setPen(ink)
-            p.setBrush(Qt.NoBrush)
+            p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawText(
                 QRectF(lx + 10, ly, max_w - 10, row_h),
-                Qt.AlignLeft | Qt.AlignVCenter,
-                metrics.elidedText(name, Qt.ElideRight, max_w - 10),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                metrics.elidedText(name, Qt.TextElideMode.ElideRight, max_w - 10),
             )
             ly += row_h
         if extra > 0:
             p.setPen(heading_color)
             p.drawText(
                 QRectF(lx, ly, max_w, row_h),
-                Qt.AlignLeft | Qt.AlignVCenter,
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                 '+%d more' % extra,
             )

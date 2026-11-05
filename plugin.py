@@ -58,15 +58,18 @@ class ARSYSplotQGISPlugin:
             self.dock = None
 
     def show_help(self):
-        try:
-            from qgis.utils import showPluginHelp
-            showPluginHelp(packageName='ARSYSplotQGIS', filename='index')
-        except Exception:
+        # Prefer the real path: the profile plugin dir is often a symlink to
+        # the git tree, and showPluginHelp's file:// URL through the symlink
+        # can fail in the system browser ("file does not exist").
+        help_path = os.path.realpath(os.path.join(PLUGIN_DIR, 'index.html'))
+        if os.path.isfile(help_path):
             from qgis.PyQt.QtCore import QUrl
             from qgis.PyQt.QtGui import QDesktopServices
-            QDesktopServices.openUrl(
-                QUrl.fromLocalFile(os.path.join(PLUGIN_DIR, 'index.html'))
-            )
+            if QDesktopServices.openUrl(QUrl.fromLocalFile(help_path)):
+                return
+        with suppress(Exception):
+            from qgis.utils import showPluginHelp
+            showPluginHelp(packageName='ARSYSplotQGIS', filename='index')
 
     def run(self):
         if self.dock is None:

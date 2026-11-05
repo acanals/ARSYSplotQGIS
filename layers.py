@@ -410,7 +410,7 @@ def keep_private(layer, project=None):
         return None
     project = project or QgsProject.instance()
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-        layer.setFlags(layer.flags() | QgsMapLayer.Private)
+        layer.setFlags(layer.flags() | QgsMapLayer.LayerFlag.Private)
     if layer.id() not in project.mapLayers():
         project.addMapLayer(layer, False)
     return layer
@@ -731,15 +731,15 @@ def _tune_marker_layer_stroke(sl, size_mm, shape, paint_color=None):
     if line_like:
         stroke = _line_stroke_mm(size_mm)
         oc = paint_color if (paint_color is not None and paint_color.isValid()) else None
-        pen_style = Qt.SolidLine
+        pen_style = Qt.PenStyle.SolidLine
     else:
         stroke = _filled_outline_mm(size_mm)
         if stroke > 0:
             oc = QColor(17, 17, 17, 255)
-            pen_style = Qt.SolidLine
+            pen_style = Qt.PenStyle.SolidLine
         else:
             oc = QColor(0, 0, 0, 0)
-            pen_style = Qt.NoPen
+            pen_style = Qt.PenStyle.NoPen
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         if hasattr(sl, 'setStrokeWidth'):
             sl.setStrokeWidth(stroke)
@@ -759,9 +759,9 @@ def _tune_marker_layer_stroke(sl, size_mm, shape, paint_color=None):
     # Sharp corners (triangle, star, …) instead of round blobs at small px.
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         if hasattr(sl, 'setPenJoinStyle'):
-            sl.setPenJoinStyle(Qt.MiterJoin)
+            sl.setPenJoinStyle(Qt.PenJoinStyle.MiterJoin)
         elif hasattr(sl, 'setStrokeJoinStyle'):
-            sl.setStrokeJoinStyle(Qt.MiterJoin)
+            sl.setStrokeJoinStyle(Qt.PenJoinStyle.MiterJoin)
 
 
 def _apply_symbol_color(sym, color, shape=None):
@@ -1335,7 +1335,7 @@ def _replace_features(layer, feats):
     ids = [
         f.id()
         for f in layer.getFeatures(
-            QgsFeatureRequest().setFlags(QgsFeatureRequest.NoGeometry)
+            QgsFeatureRequest().setFlags(QgsFeatureRequest.Flag.NoGeometry)
         )
     ]
     if ids:
@@ -1406,7 +1406,7 @@ def rebuild_section(source, section, mode, z_stretch=1.0):
         return
     stretch = _clamp_z_stretch(z_stretch)
     prov = section.dataProvider()
-    ids = [f.id() for f in section.getFeatures(QgsFeatureRequest().setFlags(QgsFeatureRequest.NoGeometry))]
+    ids = [f.id() for f in section.getFeatures(QgsFeatureRequest().setFlags(QgsFeatureRequest.Flag.NoGeometry))]
     if ids:
         prov.deleteFeatures(ids)
     feats = []
@@ -1471,7 +1471,7 @@ def field_extent(layer, field):
     if idx < 0:
         return None
     mn, mx = None, None
-    req = QgsFeatureRequest().setFlags(QgsFeatureRequest.NoGeometry).setSubsetOfAttributes([idx])
+    req = QgsFeatureRequest().setFlags(QgsFeatureRequest.Flag.NoGeometry).setSubsetOfAttributes([idx])
     for f in layer.dataProvider().getFeatures(req):
         v = f[field]
         _ok = False
@@ -1575,9 +1575,9 @@ def padded_data_extent(layers, include_lines=True):
             _ok = True
         if not _ok:
             continue
-        if gtype == QgsWkbTypes.PointGeometry:
+        if gtype == QgsWkbTypes.GeometryType.PointGeometry:
             pass
-        elif include_lines and gtype == QgsWkbTypes.LineGeometry:
+        elif include_lines and gtype == QgsWkbTypes.GeometryType.LineGeometry:
             pass
         else:
             continue
@@ -1597,7 +1597,7 @@ def point_layer_for_fit(layers):
             continue
         _ok = False
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-            if QgsWkbTypes.geometryType(lyr.wkbType()) == QgsWkbTypes.PointGeometry:
+            if QgsWkbTypes.geometryType(lyr.wkbType()) == QgsWkbTypes.GeometryType.PointGeometry:
                 return lyr
             _ok = True
         if not _ok:
