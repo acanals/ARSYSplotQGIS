@@ -2025,10 +2025,7 @@ class PlotPane(QWidget):
         try:
             from qgis.PyQt.QtSvg import QSvgGenerator
         except ImportError:
-            try:
-                from PyQt5.QtSvg import QSvgGenerator
-            except ImportError:
-                return False
+            return False
         gen = QSvgGenerator()
         gen.setFileName(path)
         gen.setSize(QSize(layout['out_w'], layout['out_h']))
