@@ -1433,7 +1433,7 @@ class AxesGridOverlay(QWidget):
                 p.setBrush(QColor(20, 200, 55, 150))
                 p.drawPolygon(QPolygonF(pts))
         if pa is not None and pb is not None:
-            try:
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 s0 = xform.transform(QgsPointXY(pa[0], pa[1]))
                 s1 = xform.transform(QgsPointXY(pb[0], pb[1]))
                 p.setPen(QPen(QColor(0, 140, 40, 240), 2.4))
@@ -1442,8 +1442,6 @@ class AxesGridOverlay(QWidget):
                     QPointF(float(s0.x()), float(s0.y())),
                     QPointF(float(s1.x()), float(s1.y())),
                 )
-            except Exception:
-                pass
         # A = red, B = blue (matches Pick A / Pick B cues).
         self._paint_profile_endpoint(p, xform, pa, 'A', QColor(220, 30, 30, 245))
         self._paint_profile_endpoint(p, xform, pb, 'B', QColor(30, 90, 230, 245))

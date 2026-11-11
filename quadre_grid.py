@@ -184,12 +184,12 @@ def _feature_xy(feat, layer):
                 return float(pt.x()), float(pt.y())
             c = geom.centroid().asPoint()
             return float(c.x()), float(c.y())
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError):
             pass
         try:
             p = geom.asPoint()
             return float(p.x()), float(p.y())
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError):
             pass
     if layer is not None:
         fields = layer.fields()
@@ -210,12 +210,12 @@ def _attr_text(value):
     try:
         if hasattr(value, 'isNull') and value.isNull():
             return ''
-    except Exception:
+    except (AttributeError, RuntimeError, TypeError, ValueError):
         pass
     try:
         if hasattr(value, 'value'):
             value = value.value()
-    except Exception:
+    except (AttributeError, RuntimeError, TypeError, ValueError):
         pass
     return str(value).strip()
 

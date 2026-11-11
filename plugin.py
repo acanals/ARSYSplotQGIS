@@ -41,7 +41,7 @@ class ARSYSplotQGISPlugin:
         self.help_action.triggered.connect(self.show_help)
         try:
             self.iface.pluginHelpMenu().addAction(self.help_action)
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError):
             self.help_action = None
 
     def unload(self):
@@ -68,7 +68,7 @@ class ARSYSplotQGISPlugin:
             from .help_dialog import show_help_dialog
             if show_help_dialog(parent):
                 return
-        except Exception:
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, OSError):
             pass
         help_path = os.path.realpath(os.path.join(PLUGIN_DIR, 'index.html'))
         if os.path.isfile(help_path):
@@ -76,7 +76,7 @@ class ARSYSplotQGISPlugin:
             from qgis.PyQt.QtGui import QDesktopServices
             if QDesktopServices.openUrl(QUrl.fromLocalFile(help_path)):
                 return
-        with suppress(Exception):
+        with suppress(ImportError, AttributeError, RuntimeError, TypeError, ValueError):
             from qgis.utils import showPluginHelp
             showPluginHelp(packageName='ARSYSplotQGIS', filename='index')
 

@@ -4372,7 +4372,7 @@ class ARSYSDock(QMainWindow):
                         x = float(pt.x())
                         y = float(pt.y())
                         z = float(pt.z()) if pt.is3D() else 0.0
-                    except Exception:
+                    except (AttributeError, TypeError, ValueError):
                         continue
                     if not P.in_corridor(x, y, frame, wide_m):
                         continue
