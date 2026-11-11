@@ -7,10 +7,11 @@ from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction
 
 from .dock import ARSYSDock
-from .layers import html_tooltip
 
 PLUGIN_DIR = os.path.dirname(__file__)
 MENU_NAME = 'ARSYSplotQGIS'
+# Plain text: QGIS toolbar/menu tips often blank out rich HTML from html_tooltip.
+TOOLBAR_TIP = '<b>ARSYSplot</b>: plans and profiles'
 
 
 class ARSYSplotQGISPlugin:
@@ -23,9 +24,8 @@ class ARSYSplotQGISPlugin:
     def initGui(self):
         icon = QIcon(os.path.join(PLUGIN_DIR, 'ArcheIcon.png'))
         self.action = QAction(icon, 'ARSYSplotQGIS', self.iface.mainWindow())
-        self.action.setToolTip(html_tooltip(
-            '**Plan**, sections, **density** and 3D.',
-        ))
+        self.action.setToolTip(TOOLBAR_TIP)
+        self.action.setStatusTip(TOOLBAR_TIP)
         self.action.setWhatsThis(
             'Plan, longitudinal and transversal views of excavation XYZ points, '
             'with group filters, kernel density and a 3D scatter. '
@@ -36,6 +36,8 @@ class ARSYSplotQGISPlugin:
         self.iface.addPluginToMenu(MENU_NAME, self.action)
         self.iface.addPluginToVectorMenu(MENU_NAME, self.action)
         self.help_action = QAction(icon, 'ARSYSplotQGIS', self.iface.mainWindow())
+        self.help_action.setToolTip(TOOLBAR_TIP)
+        self.help_action.setStatusTip(TOOLBAR_TIP)
         self.help_action.triggered.connect(self.show_help)
         try:
             self.iface.pluginHelpMenu().addAction(self.help_action)
@@ -58,9 +60,16 @@ class ARSYSplotQGISPlugin:
             self.dock = None
 
     def show_help(self):
-        # Prefer the real path: the profile plugin dir is often a symlink to
-        # the git tree, and showPluginHelp's file:// URL through the symlink
-        # can fail in the system browser ("file does not exist").
+        # In-app modal (Lite-style). Fallbacks: system browser, then showPluginHelp.
+        parent = None
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            parent = self.dock if self.dock is not None else self.iface.mainWindow()
+        try:
+            from .help_dialog import show_help_dialog
+            if show_help_dialog(parent):
+                return
+        except Exception:
+            pass
         help_path = os.path.realpath(os.path.join(PLUGIN_DIR, 'index.html'))
         if os.path.isfile(help_path):
             from qgis.PyQt.QtCore import QUrl

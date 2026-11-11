@@ -47,6 +47,7 @@ from .layers import (
     arrow_slider_from_mm,
     group_label,
     html_tooltip,
+    set_tooltip_ink,
     vector_endpoints,
 )
 
@@ -578,11 +579,16 @@ class Scatter3DDialog(QDialog):
                 '#f3f0ea', '#1a1816', '#e8e2d8', '#c8c0b4', '#ddd5c8',
             )
             muted, groove, cloud = '#6b645c', '#ddd5c8', '#faf8f4'
+            # Inverse tip: light UI → dark tip
+            tip_bg, tip_ink, tip_border = '#1c1916', '#fff5e6', '#3a342e'
         else:
             bg, ink, btn, border, hover = (
                 '#1a1816', '#fff5e6', '#2a2622', '#4a453e', '#3a3530',
             )
             muted, groove, cloud = '#999999', '#2a2622', '#141210'
+            # Inverse tip: dark UI → light tip
+            tip_bg, tip_ink, tip_border = '#fff8ee', '#1a1816', '#c8c0b4'
+        set_tooltip_ink(tip_ink)
         self.setStyleSheet(
             'QDialog { background:%s; color:%s; }'
             'QWidget { background:%s; color:%s; }'
@@ -597,10 +603,31 @@ class Scatter3DDialog(QDialog):
             'QSlider::groove:horizontal { background:%s; height:6px; border-radius:3px; }'
             'QSlider::handle:horizontal { background:#d97726; width:12px; margin:-4px 0;'
             '  border-radius:6px; }'
-            'QToolTip { background-color:#fff8ee; color:#1a1816;'
-            '  border:1px solid #8a8178; padding:4px 7px; font-size:10px; }'
-            % (bg, ink, bg, ink, muted, btn, ink, border, hover, bg, groove)
+            'QToolTip { background-color:%s; color:%s;'
+            '  border:1px solid %s; padding:4px 7px; font-size:10px; }'
+            % (
+                bg, ink, bg, ink, muted, btn, ink, border, hover, bg, groove,
+                tip_bg, tip_ink, tip_border,
+            )
         )
+        # Rich-text tips bake inline colour — retint when the 3D dialog theme changes.
+        known = (
+            '#fff5e6', '#FFF5E6', '#fff8ee', '#FFF8EE',
+            '#1a1816', '#1A1816', '#1c1916', '#1C1916',
+        )
+        for widget in self.findChildren(QWidget):
+            tip = widget.toolTip()
+            if not tip or 'color:' not in tip:
+                continue
+            updated = tip
+            for old in known:
+                if old.lower() == tip_ink.lower():
+                    continue
+                updated = updated.replace('color:%s' % old, 'color:%s' % tip_ink)
+                updated = updated.replace('color: %s' % old, 'color:%s' % tip_ink)
+            if updated != tip:
+                with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                    widget.setToolTip(updated)
         if self._gwrap is not None:
             self._gwrap.setStyleSheet('background:%s;' % bg)
         if self._group_scroll is not None:

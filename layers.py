@@ -26,34 +26,65 @@ from qgis.PyQt.QtGui import QColor
 
 from .colors_util import color_map, qgis_color
 
-# Ink for rich-text tooltips (dock updates this when the UI theme changes).
-TOOLTIP_INK = '#fff5e6'
+# Ink for rich-text tooltips (inverse of UI: dark tip → cream, light tip → dark).
+# Tip chrome (kept in sync with dock.tooltip_palette via set_tooltip_chrome).
+TOOLTIP_BG = '#fff8ee'
+TOOLTIP_INK = '#1a1816'
 
 
 def set_tooltip_ink(color):
+    """Back-compat: set tip text colour only."""
     global TOOLTIP_INK
     c = str(color or '').strip()
-    TOOLTIP_INK = c if c else '#fff5e6'
+    TOOLTIP_INK = c if c else '#1a1816'
 
 
-def html_tooltip(*parts, width=44):
-    """Compact QToolTip: small type, one line break, **bold** markers."""
-    lines = []
+def set_tooltip_chrome(bg, ink):
+    """Background + text for HTML tips (must match QToolTip / ToolTipBase)."""
+    global TOOLTIP_BG, TOOLTIP_INK
+    TOOLTIP_BG = str(bg or '').strip() or '#fff8ee'
+    TOOLTIP_INK = str(ink or '').strip() or '#1a1816'
+
+
+# Comfortable tip column for QTextDocument (≈ 48–52 chars at 11px).
+TOOLTIP_MAX_WIDTH_PX = 340
+
+
+def html_tooltip(*parts, width=None):
+    """Compact QToolTip: **bold** markers, forced tip colours, natural wrap.
+
+    Each argument is one sentence/paragraph (soft ``<br/>`` between them).
+    Word wrapping is left to Qt via a fixed table width — do **not** insert
+    hard breaks per character column (that re-wraps badly and leaves
+    one-word lines when the tip window is narrower than the estimate).
+
+    ``width`` is optional tip width in px (≥100) or approx. character columns.
+    """
+    cleaned = []
     for part in parts:
         if part is None:
             continue
         text = ' '.join(str(part).split())
-        if not text:
-            continue
-        for piece in _wrap_tooltip_line(text, width):
-            lines.append(_tooltip_markup(piece))
-    if not lines:
+        if text:
+            cleaned.append(text)
+    if not cleaned:
         return ''
-    # Inline colour: Qt rich-text tips often ignore QToolTip stylesheet colour (Dark).
+    max_px = TOOLTIP_MAX_WIDTH_PX
+    if width is not None:
+        with suppress(TypeError, ValueError):
+            w = int(width)
+            if w >= 100:
+                max_px = max(180, min(520, w))
+            elif w > 0:
+                max_px = max(180, min(520, w * 7))
+    body = '<br/>'.join(_tooltip_markup(text) for text in cleaned)
+    # Table width is the reliable wrap constraint for QToolTip rich text.
     return (
-        '<html><body>'
-        '<p style="margin:0; font-size:10px; line-height:1.2; color:%s;">%s</p>'
-        '</body></html>' % (TOOLTIP_INK, '<br/>'.join(lines))
+        '<html><body style="background-color:%s; color:%s; margin:0; padding:0;">'
+        '<table width="%d" cellspacing="0" cellpadding="0" border="0">'
+        '<tr><td style="font-size:11px; line-height:1.4; color:%s; '
+        'white-space:normal;">%s</td></tr></table>'
+        '</body></html>' % (TOOLTIP_BG, TOOLTIP_INK, max_px, TOOLTIP_INK, body)
     )
 
 
@@ -81,21 +112,6 @@ def _tooltip_markup(text):
         out.append('</b>')
         i = b + 2
     return ''.join(out)
-
-
-def _wrap_tooltip_line(text, width):
-    words = text.split()
-    if not words:
-        return []
-    lines = [words[0]]
-    for word in words[1:]:
-        visible = lines[-1].replace('**', '')
-        extra = word.replace('**', '')
-        if len(visible) + 1 + len(extra) <= width:
-            lines[-1] += ' ' + word
-        else:
-            lines.append(word)
-    return lines
 
 
 GROUP_NAME = 'ARSYSplotQGIS'
@@ -424,6 +440,167 @@ def release_private(layer, project=None):
         project.removeMapLayer(layer.id())
 
 
+def publish_source_to_project(source, name=None, project=None):
+    """Clone the plugin PointZ source into a normal QGIS project memory layer.
+
+    Sends the **complete** attribute table and geometries (filters / subset on
+    the private source are ignored for this copy). The layer is not Private, so
+    it appears in the legend and can be used with Processing / GRASS. It stays
+    a memory layer — the user decides whether to Save As / make permanent when
+    closing the project. The plugin workspace copy is left unchanged.
+    """
+    if source is None or not source.isValid():
+        raise ValueError('No data loaded in ARSYSplotQGIS yet.')
+    project = project or QgsProject.instance()
+    crs = source.crs()
+    auth = (crs.authid() or '') if crs is not None and crs.isValid() else ''
+    base = (name or source.name() or 'ARSYSplot').strip() or 'ARSYSplot'
+    # Avoid colliding with the private name when both appear in debugging.
+    out_name = base if base.endswith('(QGIS)') else '%s (QGIS)' % base
+
+    dest = QgsVectorLayer(
+        'PointZ?crs=%s' % auth if auth else 'PointZ',
+        out_name,
+        'memory',
+    )
+    if not dest.isValid():
+        dest = QgsVectorLayer('PointZ', out_name, 'memory')
+    if not dest.isValid():
+        raise ValueError('Could not create a project memory layer')
+    if crs is not None and crs.isValid():
+        dest.setCrs(crs)
+    _copy_fields(dest, source.fields())
+
+    # Full table: temporarily clear subset used by Group / XYZ filters.
+    prev_subset = ''
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        prev_subset = source.subsetString() or ''
+    try:
+        if prev_subset:
+            source.setSubsetString('')
+        feats = []
+        for src in source.getFeatures():
+            feat = QgsFeature(dest.fields())
+            geom = src.geometry()
+            if geom is not None and not geom.isEmpty():
+                feat.setGeometry(QgsGeometry(geom))
+            attrs = []
+            for field in dest.fields():
+                idx = src.fields().lookupField(field.name())
+                attrs.append(src[idx] if idx >= 0 else NULL)
+            feat.setAttributes(attrs)
+            feats.append(feat)
+    finally:
+        if prev_subset:
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                source.setSubsetString(prev_subset)
+
+    if not feats:
+        raise ValueError('Source layer has no features to send to QGIS.')
+    dest.dataProvider().addFeatures(feats)
+    dest.updateExtents()
+
+    # Public project layer — not plugin-private.
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        flags = dest.flags()
+        private = getattr(QgsMapLayer.LayerFlag, 'Private', None)
+        if private is not None and (flags & private):
+            dest.setFlags(flags & ~private)
+    # Do not set arsysplotqgis=source (that marks private plugin layers).
+    dest.setCustomProperty('arsysplotqgis_export', '1')
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        dest.setCustomProperty(
+            'arsysplotqgis_export_from',
+            str(source.customProperty('arsysplotqgis_file') or source.name()),
+        )
+
+    rend = source.renderer()
+    if rend is not None:
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            dest.setRenderer(rend.clone())
+
+    project.addMapLayer(dest, True)
+    return dest
+
+
+def publish_vector_to_project(source, name=None, project=None):
+    """Clone any vector layer into a public project memory layer (legend).
+
+    Used for Profile LONG/TRANS section panes. Geometry and attributes are
+    copied as currently stored (already projected to section axes). Honour the
+    source subset string so Group ∩ Resources filters apply.
+    """
+    if source is None or not source.isValid():
+        raise ValueError('No section layer to send to QGIS.')
+    project = project or QgsProject.instance()
+    crs = source.crs()
+    auth = (crs.authid() or '') if crs is not None and crs.isValid() else ''
+    out_name = (name or source.name() or 'ARSYSplot section').strip()
+    if not out_name:
+        out_name = 'ARSYSplot section'
+    if not out_name.endswith('(QGIS)'):
+        out_name = '%s (QGIS)' % out_name
+
+    wkb = source.wkbType()
+    geom_name = QgsWkbTypes.displayString(wkb) if wkb is not None else 'Point'
+    uri = '%s?crs=%s' % (geom_name, auth) if auth else geom_name
+    dest = QgsVectorLayer(uri, out_name, 'memory')
+    if not dest.isValid():
+        dest = QgsVectorLayer(geom_name, out_name, 'memory')
+    if not dest.isValid():
+        raise ValueError('Could not create a project memory layer')
+    if crs is not None and crs.isValid():
+        dest.setCrs(crs)
+    _copy_fields(dest, source.fields())
+
+    feats = []
+    for src in source.getFeatures():
+        feat = QgsFeature(dest.fields())
+        geom = src.geometry()
+        if geom is not None and not geom.isEmpty():
+            feat.setGeometry(QgsGeometry(geom))
+        attrs = []
+        for field in dest.fields():
+            idx = src.fields().lookupField(field.name())
+            attrs.append(src[idx] if idx >= 0 else NULL)
+        feat.setAttributes(attrs)
+        feats.append(feat)
+    if not feats:
+        raise ValueError('Section layer has no features to send to QGIS.')
+    dest.dataProvider().addFeatures(feats)
+    dest.updateExtents()
+
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        flags = dest.flags()
+        private = getattr(QgsMapLayer.LayerFlag, 'Private', None)
+        if private is not None and (flags & private):
+            dest.setFlags(flags & ~private)
+    dest.setCustomProperty('arsysplotqgis_export', '1')
+    dest.setCustomProperty('arsysplotqgis_export_kind', 'profile_section')
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        dest.setCustomProperty(
+            'arsysplotqgis_export_from',
+            str(source.customProperty('arsysplotqgis_file') or source.name()),
+        )
+    for key in (
+        'arsysplotqgis_z_stretch',
+        'arsysplotqgis_profile',
+        'arsysplotqgis_profile_long_axis',
+    ):
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            val = source.customProperty(key)
+            if val not in (None, ''):
+                dest.setCustomProperty(key, val)
+
+    rend = source.renderer()
+    if rend is not None:
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            dest.setRenderer(rend.clone())
+
+    project.addMapLayer(dest, True)
+    return dest
+
+
 def clear_plugin_legend(project=None):
     """Drop leftover ARSYSplotQGIS legend nodes from older versions."""
     project = project or QgsProject.instance()
@@ -601,11 +778,13 @@ def group_class_attr(field):
 
 
 # QGIS simple-marker names → UI label.
+# Same catalogue as ARSYSplotLite (GroupColors.VALID_SYMBOLS) — no losses either way.
 MARKER_SHAPES = (
     ('circle', 'Circle'),
     ('square', 'Square'),
     ('diamond', 'Diamond'),
     ('triangle', 'Triangle'),
+    ('triangle-inverted', 'Inverted triangle'),
     ('equilateral_triangle', 'Equilateral triangle'),
     ('pentagon', 'Pentagon'),
     ('hexagon', 'Hexagon'),
@@ -636,6 +815,10 @@ _SHAPE_ALIASES = {
     'eq': 'equilateral_triangle',
     'equilateral': 'equilateral_triangle',
     'equilateraltriangle': 'equilateral_triangle',
+    'triangle_inverted': 'triangle-inverted',
+    'inverted': 'triangle-inverted',
+    'inverted_triangle': 'triangle-inverted',
+    'invertedtriangle': 'triangle-inverted',
     'circ': 'circle',
     'o': 'circle',
     'sq': 'square',
@@ -692,6 +875,9 @@ def _coerce_shape_id(name):
         'x': 'cross2',
         'equilateraltriangle': 'equilateral_triangle',
         'equilateral_triangle': 'equilateral_triangle',
+        'triangle_inverted': 'triangle-inverted',
+        'inverted_triangle': 'triangle-inverted',
+        'invertedtriangle': 'triangle-inverted',
     }
     key = aliases.get(key, key)
     if key in _MARKER_IDS:
@@ -699,25 +885,59 @@ def _coerce_shape_id(name):
     return None
 
 
+def _layer_marker_angle(sl):
+    if sl is None:
+        return 0.0
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        if hasattr(sl, 'angle') and callable(sl.angle):
+            return float(sl.angle())
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        props = sl.properties() if hasattr(sl, 'properties') else None
+        if props and props.get('angle') not in (None, ''):
+            return float(props.get('angle'))
+    return 0.0
+
+
+def _canonical_shape_from_layer(sid, angle):
+    """triangle + ~180° ↔ Lite/plugin id triangle-inverted."""
+    if sid == 'triangle' and abs(float(angle or 0.0) - 180.0) < 1.0:
+        return 'triangle-inverted'
+    return sid
+
+
+def _qgis_simple_marker_name(shape):
+    """Our id → QGIS simple-marker name (inverted triangle = triangle @ 180°)."""
+    shape = resolve_marker_shape(shape)
+    if shape == 'triangle-inverted':
+        return 'triangle'
+    return shape
+
+
+def _qgis_simple_marker_angle(shape):
+    shape = resolve_marker_shape(shape)
+    return 180.0 if shape == 'triangle-inverted' else 0.0
+
+
 def _layer_shape_id(sl):
     if sl is None:
         return None
+    angle = _layer_marker_angle(sl)
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         if hasattr(sl, 'name') and callable(sl.name):
             sid = _coerce_shape_id(sl.name())
             if sid:
-                return sid
+                return _canonical_shape_from_layer(sid, angle)
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         if hasattr(sl, 'properties'):
             sid = _coerce_shape_id((sl.properties() or {}).get('name'))
             if sid:
-                return sid
+                return _canonical_shape_from_layer(sid, angle)
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         if hasattr(sl, 'shape') and callable(sl.shape):
             # Qgis.MarkerShape.Cross → "MarkerShape.Cross" / "Cross"
             sid = _coerce_shape_id(str(sl.shape()).split('.')[-1])
             if sid:
-                return sid
+                return _canonical_shape_from_layer(sid, angle)
     return None
 
 
@@ -805,7 +1025,8 @@ def _marker(color, size, shape=None):
     shape = resolve_marker_shape(shape)
     size = max(0.0, float(size))
     props = {
-        'name': shape,
+        'name': _qgis_simple_marker_name(shape),
+        'angle': str(_qgis_simple_marker_angle(shape)),
         'color': qgis_color(c),
         'size': str(size),
     }
@@ -1078,6 +1299,7 @@ _MARKER_SHAPE_ENUM = {
     'square': 'Square',
     'diamond': 'Diamond',
     'triangle': 'Triangle',
+    'triangle-inverted': 'Triangle',  # rendered as triangle @ 180°
     'equilateral_triangle': 'EquilateralTriangle',
     'pentagon': 'Pentagon',
     'hexagon': 'Hexagon',
@@ -1093,15 +1315,20 @@ def _set_symbol_marker_name(sym, shape):
     if sym is None:
         return
     shape = resolve_marker_shape(shape)
+    qname = _qgis_simple_marker_name(shape)
+    angle = _qgis_simple_marker_angle(shape)
     enum_name = _MARKER_SHAPE_ENUM.get(shape, 'Circle')
     for i in range(sym.symbolLayerCount()):
         lyr = sym.symbolLayer(i)
         if lyr is None:
             continue
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            if hasattr(lyr, 'setAngle'):
+                lyr.setAngle(angle)
         done = False
         if hasattr(lyr, 'setName'):
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-                lyr.setName(shape)
+                lyr.setName(qname)
                 done = True
         if done:
             continue
@@ -1396,15 +1623,49 @@ def _clamp_z_stretch(z_stretch):
     return s
 
 
-def rebuild_section(source, section, mode, z_stretch=1.0):
-    """mode: 'long' → Point(x,z); 'trans' → Point(y,z).
+def clear_section(section):
+    """Remove all features from a section / section-line memory layer."""
+    if section is None:
+        return
+    prov = section.dataProvider()
+    ids = [
+        f.id()
+        for f in section.getFeatures(
+            QgsFeatureRequest().setFlags(QgsFeatureRequest.Flag.NoGeometry)
+        )
+    ]
+    if ids:
+        prov.deleteFeatures(ids)
+    section.updateExtents()
+    section.triggerRepaint()
+
+
+def rebuild_section(source, section, mode, z_stretch=1.0, profile=None):
+    """mode: 'long' → Point(x,z); 'trans' → Point(y,z); profile uses plan axes.
+
+    ``profile`` is ``{'frame': (...), 'wide_m': float}`` for Profile mode
+    (finite XY profile; LONG = dominant plan axis of axial foot × Z,
+    TRANS = other plan axis of each point × Z). ``None`` = site-wide XZ/YZ.
 
     ``z_stretch`` > 1 exaggerates Z on section canvases (display metres).
     Axis labels must divide by the same factor to show real Z.
     """
     if source is None or section is None:
         return
+    from . import profile as P
+
     stretch = _clamp_z_stretch(z_stretch)
+    frame = None
+    wide_m = 0.0
+    if profile:
+        frame = profile.get('frame')
+        try:
+            wide_m = float(profile.get('wide_m') or 0.0)
+        except (TypeError, ValueError):
+            wide_m = 0.0
+        if frame is None or wide_m <= 0.0:
+            clear_section(section)
+            return
     prov = section.dataProvider()
     ids = [f.id() for f in section.getFeatures(QgsFeatureRequest().setFlags(QgsFeatureRequest.Flag.NoGeometry))]
     if ids:
@@ -1421,11 +1682,27 @@ def rebuild_section(source, section, mode, z_stretch=1.0):
             _ok = True
         if not _ok:
             continue
-        z_disp = z * stretch
-        if mode == 'long':
-            g = QgsGeometry(QgsPoint(x, z_disp))
+        if frame is not None:
+            if not P.in_corridor(x, y, frame, wide_m):
+                continue
+            uv = P.to_uv(x, y, frame)
+            if uv is None:
+                continue
+            u, _v = uv
+            if mode == 'long':
+                # Plan X or Y of the axial foot — ticks match Planta.
+                h = P.long_h_from_uv(u, frame)
+                if h is None:
+                    continue
+            else:
+                # Other plan axis of the point (not profile offset).
+                h = P.trans_h_from_xy(x, y, frame)
+                if h is None:
+                    continue
         else:
-            g = QgsGeometry(QgsPoint(y, z_disp))
+            h = x if mode == 'long' else y
+        z_disp = z * stretch
+        g = QgsGeometry(QgsPoint(h, z_disp))
         feat = QgsFeature(section.fields())
         feat.setGeometry(g)
         feat.setAttributes(src.attributes())
@@ -1434,22 +1711,85 @@ def rebuild_section(source, section, mode, z_stretch=1.0):
         prov.addFeatures(feats)
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         section.setCustomProperty('arsysplotqgis_z_stretch', '%.6g' % stretch)
+        section.setCustomProperty(
+            'arsysplotqgis_profile', '1' if frame is not None else '0',
+        )
+        if frame is not None and mode == 'long':
+            section.setCustomProperty(
+                'arsysplotqgis_profile_long_axis', P.long_plan_axis(frame),
+            )
+        if frame is not None and mode == 'trans':
+            section.setCustomProperty(
+                'arsysplotqgis_profile_trans_axis', P.trans_plan_axis(frame),
+            )
     section.updateExtents()
+    # Snap plan-axis section extent to whole metres when profiling.
+    if frame is not None and section.featureCount() > 0:
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            ext = section.extent()
+            span = P.round_axis_bounds(ext.xMinimum(), ext.xMaximum())
+            if span is not None:
+                section.setExtent(QgsRectangle(
+                    span[0], ext.yMinimum(), span[1], ext.yMaximum(),
+                ))
     section.triggerRepaint()
 
 
-def rebuild_section_lines(source, section, mode, z_stretch=1.0):
-    """Project P2→P3 (or P1→P2) onto XZ or YZ as 2D lines."""
+def rebuild_section_lines(source, section, mode, z_stretch=1.0, profile=None):
+    """Project P2→P3 (or P1→P2) onto XZ/YZ or profile UZ/VZ as 2D lines."""
     if source is None or section is None:
         return
+    from . import profile as P
+
     stretch = _clamp_z_stretch(z_stretch)
+    frame = None
+    wide_m = 0.0
+    if profile:
+        frame = profile.get('frame')
+        try:
+            wide_m = float(profile.get('wide_m') or 0.0)
+        except (TypeError, ValueError):
+            wide_m = 0.0
+        if frame is None or wide_m <= 0.0:
+            clear_section(section)
+            return
     feats = []
     for src in source.getFeatures():
         ends = vector_endpoints(src)
         if ends is None:
             continue
         a, b = ends
-        if mode == 'long':
+        # Keep vector if either endpoint (or midpoint) sits in the profile.
+        if frame is not None:
+            mid = (
+                0.5 * (a[0] + b[0]),
+                0.5 * (a[1] + b[1]),
+            )
+            if not (
+                P.in_corridor(a[0], a[1], frame, wide_m)
+                or P.in_corridor(b[0], b[1], frame, wide_m)
+                or P.in_corridor(mid[0], mid[1], frame, wide_m)
+            ):
+                continue
+            uva = P.to_uv(a[0], a[1], frame)
+            uvb = P.to_uv(b[0], b[1], frame)
+            if uva is None or uvb is None:
+                continue
+            if mode == 'long':
+                ha = P.long_h_from_uv(uva[0], frame)
+                hb = P.long_h_from_uv(uvb[0], frame)
+                if ha is None or hb is None:
+                    continue
+                pa = (ha, a[2] * stretch, 0.0)
+                pb = (hb, b[2] * stretch, 0.0)
+            else:
+                ha = P.trans_h_from_xy(a[0], a[1], frame)
+                hb = P.trans_h_from_xy(b[0], b[1], frame)
+                if ha is None or hb is None:
+                    continue
+                pa = (ha, a[2] * stretch, 0.0)
+                pb = (hb, b[2] * stretch, 0.0)
+        elif mode == 'long':
             pa = (a[0], a[2] * stretch, 0.0)
             pb = (b[0], b[2] * stretch, 0.0)
         else:
@@ -1464,6 +1804,9 @@ def rebuild_section_lines(source, section, mode, z_stretch=1.0):
     _replace_features(section, feats)
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         section.setCustomProperty('arsysplotqgis_z_stretch', '%.6g' % stretch)
+        section.setCustomProperty(
+            'arsysplotqgis_profile', '1' if frame is not None else '0',
+        )
 
 
 def field_extent(layer, field):

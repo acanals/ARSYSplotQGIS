@@ -9,6 +9,7 @@ from qgis.PyQt.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen, QPolygo
 from qgis.PyQt.QtWidgets import QWidget
 
 from .export_dialog import is_light_color, mm_to_px, pt_to_px
+from . import quadre_grid as QG
 
 from .layers import (
     DEFAULT_MARKER,
@@ -20,18 +21,34 @@ from .layers import (
 )
 
 INK = QColor(255, 245, 230)
-GRID = QColor(255, 245, 230, 22)
+# Screen grid: alpha ~ Lite --plot-ink-faint (0.38); width > 1 so lines read on HiDPI.
+GRID = QColor(255, 245, 230, 95)
 AXIS = QColor(255, 245, 230, 120)
 LABEL = QColor(255, 245, 230, 190)
 TITLE = QColor(255, 245, 230, 140)
-GRID_LIGHT = QColor(40, 40, 40, 40)
+GRID_LIGHT = QColor(40, 40, 40, 95)
 AXIS_LIGHT = QColor(30, 30, 30, 200)
 LABEL_LIGHT = QColor(20, 20, 20, 230)
 TITLE_LIGHT = QColor(40, 40, 40, 200)
-GRID_PAPER = QColor(50, 48, 44, 110)
-AXIS_PAPER = QColor(26, 24, 22)
-LABEL_PAPER = QColor(26, 24, 22)
-TITLE_PAPER = QColor(70, 66, 60)
+GRID_PEN_W = 1
+# Paper colours / mm — keep in sync with Lite CSS --paper-*.
+PAPER_BG = QColor('#ffffff')
+PAPER_INK = QColor('#1c1916')
+PAPER_MUTED = QColor('#6b645c')
+PAPER_FAINT = QColor('#9a9288')
+PAPER_GRID = QColor('#c8c0b4')
+GRID_PAPER = PAPER_GRID
+AXIS_PAPER = PAPER_INK
+LABEL_PAPER = PAPER_INK
+TITLE_PAPER = PAPER_MUTED
+PAPER_FRAME_MM = 0.25
+PAPER_GRID_MM = 0.30
+PAPER_TICK_MM = 0.25
+PAPER_SCALE_BAR_MM = 0.22
+PAPER_SCALE_BAR_H_MM = 2.0
+PAPER_SCALE_BAR_Y_MM = 12.5
+PAPER_TICK_LEN_MM = 1.6
+PAPER_POINT_DIAM_MM = 2.2
 
 # Axis names sit outside the tick numbers. Legend is export-only (extra strip).
 PAD_L, PAD_R, PAD_T, PAD_B = 68, 16, 10, 52
@@ -74,13 +91,20 @@ def draw_legend_marker(painter, cx, cy, r, shape, color):
             QPointF(cx, cy + r), QPointF(cx - r, cy),
         ]))
         return
-    if shape in ('triangle', 'equilateral_triangle'):
+    if shape in ('triangle', 'equilateral_triangle', 'triangle-inverted'):
         h = r * 1.15
-        painter.drawPolygon(QPolygonF([
-            QPointF(cx, cy - h),
-            QPointF(cx + h * 0.95, cy + h * 0.65),
-            QPointF(cx - h * 0.95, cy + h * 0.65),
-        ]))
+        if shape == 'triangle-inverted':
+            painter.drawPolygon(QPolygonF([
+                QPointF(cx, cy + h),
+                QPointF(cx - h * 0.95, cy - h * 0.65),
+                QPointF(cx + h * 0.95, cy - h * 0.65),
+            ]))
+        else:
+            painter.drawPolygon(QPolygonF([
+                QPointF(cx, cy - h),
+                QPointF(cx + h * 0.95, cy + h * 0.65),
+                QPointF(cx - h * 0.95, cy + h * 0.65),
+            ]))
         return
     if shape in ('pentagon', 'hexagon', 'octagon'):
         n = 5 if shape == 'pentagon' else (6 if shape == 'hexagon' else 8)
@@ -184,11 +208,13 @@ def snapped_data_extent(rect, h_axis, v_axis):
 def _ticks(minv, maxv, axis, px_span):
     minv, maxv = float(minv), float(maxv)
     if _is_planar(axis):
+        # Inclusive metre lines: floor(min) … ceil(max). Every cell is 1 m,
+        # even when points only occupy a corner of the first/last square.
         step = 1.0
-        start = int(math.ceil(minv - 1e-9))
-        end = int(math.floor(maxv + 1e-9))
-        if end < start:
-            start, end = int(_floor_m(minv)), int(_ceil_m(maxv))
+        start = int(_floor_m(minv))
+        end = int(_ceil_m(maxv))
+        if end <= start:
+            end = start + 1
         out = []
         v = start
         n = 0
@@ -196,10 +222,6 @@ def _ticks(minv, maxv, axis, px_span):
             out.append(v)
             v += 1
             n += 1
-        if abs(minv - round(minv)) < 0.05:
-            origin = int(round(minv))
-            if not out or out[0] != origin:
-                out.insert(0, origin)
         if not out:
             out = [start, start + 1]
         return step, out
@@ -247,8 +269,48 @@ def _fmt(value, step, axis):
     return ('%%.%df' % digits) % value
 
 
-# Fixed scale-bar length on every paper export (map metres).
+# Preferred scale-bar ground length (Lite parity); may adapt at extreme 1∶N.
 SCALE_BAR_M = 0.5  # 50 cm
+_SCALE_BAR_CANDIDATES_M = (
+    0.5, 1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 5000,
+)
+
+
+def pick_scale_bar_metres(scale_n):
+    """Prefer 50 cm; adapt so the bar stays ~14–52 mm on paper (Lite parity)."""
+    try:
+        n = max(1.0, float(scale_n))
+    except (TypeError, ValueError):
+        n = 1.0
+    fixed_mm = (SCALE_BAR_M * 1000.0) / n
+    if 8.0 <= fixed_mm <= 60.0:
+        return float(SCALE_BAR_M)
+    target_mm = 32.0
+    best = float(SCALE_BAR_M)
+    best_diff = float('inf')
+    for metres in _SCALE_BAR_CANDIDATES_M:
+        mm = (float(metres) * 1000.0) / n
+        if mm < 14.0 or mm > 52.0:
+            continue
+        diff = abs(mm - target_mm)
+        if diff < best_diff:
+            best_diff = diff
+            best = float(metres)
+    if best_diff == float('inf'):
+        rough = (target_mm * n) / 1000.0
+        best = max(0.5, float(('%.1g' % rough)))
+    return best
+
+
+def _scale_bar_label(metres):
+    m = float(metres)
+    if abs(m - SCALE_BAR_M) < 1e-9:
+        return '50 cm'
+    if m >= 1.0:
+        if abs(m - round(m)) < 1e-9:
+            return '%d m' % int(round(m))
+        return '%g m' % m
+    return '%g cm' % (m * 100.0)
 
 
 def _vertical_axis_ticks(ymin, ymax, v_axis, height_px, z_stretch=1.0):
@@ -303,8 +365,15 @@ def paint_paper_axes(
     xmin, xmax, ymin, ymax,
     h_axis, v_axis, h_label, v_label, dpi,
     z_stretch=1.0,
+    show_grid=True,
+    fmt_h=None,
+    fmt_v=None,
+    scale_n=None,
 ):
-    """Axes, metre grid and scale bar in output pixels (paper)."""
+    """Axes, metre grid and scale bar in output pixels (paper).
+
+    Returns ``(bar_metres, bar_px)`` for placing the 1∶N label next to the bar.
+    """
     dx = max(xmax - xmin, 1e-9)
     dy = max(ymax - ymin, 1e-9)
     pw = max(right - left, 1.0)
@@ -316,32 +385,48 @@ def paint_paper_axes(
     def sy(y):
         return bottom - (float(y) - ymin) / dy * ph
 
-    h_step, h_ticks = _ticks(xmin, xmax, h_axis, pw)
-    v_step, v_pairs = _vertical_axis_ticks(
-        ymin, ymax, v_axis, ph, z_stretch=z_stretch,
-    )
+    use_h = callable(fmt_h)
+    use_v = callable(fmt_v)
+    if use_h:
+        h_step, h_ticks = 1.0, QG.grid_lines(xmin, xmax)
+        h_labels = QG.cell_mids(xmin, xmax)
+    else:
+        h_step, h_ticks = _ticks(xmin, xmax, h_axis, pw)
+        h_labels = h_ticks
+    if use_v:
+        v_step = 1.0
+        v_pairs = [(t, t) for t in QG.grid_lines(ymin, ymax)]
+        v_labels = [(t, t) for t in QG.cell_mids(ymin, ymax)]
+    else:
+        v_step, v_pairs = _vertical_axis_ticks(
+            ymin, ymax, v_axis, ph, z_stretch=z_stretch,
+        )
+        v_labels = v_pairs
     v_ticks = [m for m, _lab in v_pairs]
-    grid_w = max(1.0, mm_to_px(0.12, dpi))
-    axis_w = max(1.2, mm_to_px(0.32, dpi))
-    tick_w = max(1.0, mm_to_px(0.22, dpi))
-    tick_len = mm_to_px(1.6, dpi)
+    # Metre / excavation-square network — Lite CSS --paper-*-mm.
+    grid_w = max(1.2, mm_to_px(PAPER_GRID_MM, dpi))
+    axis_w = max(1.0, mm_to_px(PAPER_FRAME_MM, dpi))
+    tick_w = max(1.0, mm_to_px(PAPER_TICK_MM, dpi))
+    tick_len = mm_to_px(PAPER_TICK_LEN_MM, dpi)
 
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    painter.setPen(QPen(GRID_PAPER, grid_w))
-    for tick in h_ticks:
-        x = sx(tick)
-        if x < left - 0.5 or x > right + 0.5:
-            continue
-        _line(painter, x, top, x, bottom)
-    for tick in v_ticks:
-        y = sy(tick)
-        if y < top - 0.5 or y > bottom + 0.5:
-            continue
-        _line(painter, left, y, right, y)
+    if show_grid:
+        painter.setPen(QPen(GRID_PAPER, grid_w))
+        for tick in h_ticks:
+            x = sx(tick)
+            if x < left - 0.5 or x > right + 0.5:
+                continue
+            _line(painter, x, top, x, bottom)
+        for tick in v_ticks:
+            y = sy(tick)
+            if y < top - 0.5 or y > bottom + 0.5:
+                continue
+            _line(painter, left, y, right, y)
 
+    # Complete data-frame outline (Lite export rect), not only the L-axes.
+    painter.setBrush(Qt.BrushStyle.NoBrush)
     painter.setPen(QPen(AXIS_PAPER, axis_w))
-    _line(painter, left, top, left, bottom)
-    _line(painter, left, bottom, right, bottom)
+    painter.drawRect(QRectF(left, top, right - left, bottom - top))
     painter.setPen(QPen(AXIS_PAPER, tick_w))
     for tick in h_ticks:
         x = sx(tick)
@@ -359,57 +444,62 @@ def paint_paper_axes(
     painter.setFont(font)
     painter.setPen(LABEL_PAPER)
     lab_h = mm_to_px(4.2, dpi)
-    for tick in h_ticks:
+    for tick in h_labels:
         x = sx(tick)
         if x < left - 2 or x > right + 2:
             continue
+        text = fmt_h(tick) if use_h else _fmt(tick, h_step, h_axis)
         painter.drawText(
             QRectF(x - mm_to_px(10, dpi), bottom + tick_len + mm_to_px(0.4, dpi),
                    mm_to_px(20, dpi), lab_h),
             Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
-            _fmt(tick, h_step, h_axis),
+            text,
         )
-    for map_y, lab_v in v_pairs:
+    for map_y, lab_v in v_labels:
         y = sy(map_y)
         if y < top - 2 or y > bottom + 2:
             continue
+        text = fmt_v(lab_v) if use_v else _fmt(lab_v, v_step, v_axis)
         painter.drawText(
             QRectF(left - mm_to_px(17, dpi), y - lab_h / 2.0,
                    mm_to_px(15.2, dpi), lab_h),
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-            _fmt(lab_v, v_step, v_axis),
+            text,
         )
 
     font.setPixelSize(pt_to_px(9, dpi))
     painter.setFont(font)
     painter.setPen(TITLE_PAPER)
+    h_title = h_label if use_h else '%s (m)' % h_label
     painter.drawText(
         QRectF(left, bottom + mm_to_px(6.2, dpi), pw, mm_to_px(5, dpi)),
         Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
-        '%s (m)' % h_label,
+        h_title,
     )
     painter.save()
     painter.translate(left - mm_to_px(14.5, dpi), (top + bottom) / 2.0)
     painter.rotate(-90)
+    v_title = v_label if use_v else _z_axis_title(v_label, z_stretch)
     painter.drawText(
         QRectF(-mm_to_px(28, dpi), -mm_to_px(4, dpi), mm_to_px(56, dpi), mm_to_px(5, dpi)),
         Qt.AlignmentFlag.AlignCenter,
-        _z_axis_title(v_label, z_stretch),
+        v_title,
     )
     painter.restore()
 
-    # Always 50 cm at true map scale; 5 × 10 cm alternating black / white.
-    bar_m = float(SCALE_BAR_M)
-    bar_px = bar_m / dx * pw
-    n_seg = 5  # 10 cm each
+    # Prefer 50 cm; adapt ground length at extreme 1∶N (Lite pickScaleBarMetres).
+    bar_m = pick_scale_bar_metres(scale_n if scale_n is not None else 50)
+    bar_px = float(bar_m) / dx * pw
+    # 5 × 10 cm segments when bar is 50 cm; otherwise 4 equal parts.
+    n_seg = 5 if abs(float(bar_m) - SCALE_BAR_M) < 1e-9 else 4
     seg_px = bar_px / float(n_seg)
     bx = left
-    by = bottom + mm_to_px(12.5, dpi)
-    bh = mm_to_px(2.0, dpi)
-    rim = QPen(AXIS_PAPER, max(1.0, mm_to_px(0.22, dpi)))
+    by = bottom + mm_to_px(PAPER_SCALE_BAR_Y_MM, dpi)
+    bh = mm_to_px(PAPER_SCALE_BAR_H_MM, dpi)
+    rim = QPen(AXIS_PAPER, max(1.0, mm_to_px(PAPER_SCALE_BAR_MM, dpi)))
     for i in range(n_seg):
         sx0 = bx + i * seg_px
-        fill = AXIS_PAPER if (i % 2 == 0) else QColor(255, 255, 255)
+        fill = AXIS_PAPER if (i % 2 == 0) else PAPER_BG
         painter.setPen(rim)
         painter.setBrush(fill)
         painter.drawRect(QRectF(sx0, by, seg_px, bh))
@@ -418,12 +508,13 @@ def paint_paper_axes(
     painter.drawRect(QRectF(bx, by, bar_px, bh))
     font.setPixelSize(pt_to_px(7, dpi))
     painter.setFont(font)
-    painter.setPen(LABEL_PAPER)
+    painter.setPen(TITLE_PAPER)
     painter.drawText(
         QRectF(bx, by + bh + mm_to_px(0.4, dpi), max(bar_px, mm_to_px(18, dpi)), lab_h),
         Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
-        '50 cm',
+        _scale_bar_label(bar_m),
     )
+    return bar_m, bar_px
 
 
 def _legend_col_width_px(items, field, dpi):
@@ -452,12 +543,54 @@ def _legend_col_width_px(items, field, dpi):
     return min(mm_to_px(42, dpi), max(min_col, glyph + max_label + pad))
 
 
-def paper_legend_plan(items, field, plot_h_px, plot_w_px, dpi):
+def prefer_legend_place(
+    drawn_w_mm, drawn_h_mm, avail_w_mm, avail_h_mm,
+    paper_w_mm, paper_h_mm, n_items, rows_fit_side,
+):
+    """Pick ``side`` (vertical) or ``below`` (horizontal columns).
+
+    Uses leftover letterbox space after placing the drawing on the sheet, plus
+    paper orientation. Falls back to orientation when the frame fills the area.
+    """
+    n = max(0, int(n_items or 0))
+    rows_ok = max(1, int(rows_fit_side or 1))
+    if n == 0:
+        return 'side'
+    if n > rows_ok:
+        return 'below'
+    free_w = max(0.0, float(avail_w_mm) - float(drawn_w_mm))
+    free_h = max(0.0, float(avail_h_mm) - float(drawn_h_mm))
+    paper_land = float(paper_w_mm) >= float(paper_h_mm)
+    # Not enough side room (typical with custom 1∶N) → under the frame.
+    if free_w < 22.0:
+        return 'below'
+    # Clear leftover preference: more side room → vertical legend.
+    if free_w >= free_h + 6.0 and free_w >= 22.0:
+        return 'side'
+    if free_h >= free_w + 6.0:
+        return 'below'
+    # Frame fills the plot area — use paper / drawing aspect.
+    drawn_land = float(drawn_w_mm) >= float(drawn_h_mm) * 0.95
+    if paper_land and drawn_land:
+        return 'below'  # wide drawing on landscape: room is under the frame
+    if (not paper_land) and (not drawn_land):
+        return 'side'  # tall drawing on portrait: room is beside
+    if paper_land:
+        return 'side'
+    return 'below'
+
+
+def paper_legend_plan(
+    items, field, plot_h_px, plot_w_px, dpi,
+    prefer_place=None,
+    drawn_w_mm=None, drawn_h_mm=None,
+    avail_w_mm=None, avail_h_mm=None,
+    paper_w_mm=None, paper_h_mm=None,
+):
     """Choose side (1 column) vs below (multi-column) for a complete legend.
 
-    Side only when every entry fits in the plot height as a single column.
-    Otherwise place under the plot and fill its width with columns — avoids
-    stretching short section exports sideways.
+    Placement prefers leftover letterbox space / paper orientation when the
+    sizes are provided; otherwise falls back to “fits in height → side”.
     """
     items = list(items or [])
     row_h = mm_to_px(3.6, dpi)
@@ -476,7 +609,23 @@ def paper_legend_plan(items, field, plot_h_px, plot_w_px, dpi):
             'row_h': row_h, 'head_h': head_h, 'n': 0,
         }
 
-    if n <= rows_side:
+    place = prefer_place
+    if place not in ('side', 'below'):
+        if (
+            drawn_w_mm is not None and drawn_h_mm is not None
+            and avail_w_mm is not None and avail_h_mm is not None
+            and paper_w_mm is not None and paper_h_mm is not None
+        ):
+            place = prefer_legend_place(
+                drawn_w_mm, drawn_h_mm, avail_w_mm, avail_h_mm,
+                paper_w_mm, paper_h_mm, n, rows_side,
+            )
+        else:
+            place = 'side' if n <= rows_side else 'below'
+    if place == 'side' and n > rows_side:
+        place = 'below'
+
+    if place == 'side':
         return {
             'place': 'side', 'n_cols': 1, 'rows_per_col': rows_side,
             'col_w': col_w, 'total_w': col_w,
@@ -484,16 +633,22 @@ def paper_legend_plan(items, field, plot_h_px, plot_w_px, dpi):
             'row_h': row_h, 'head_h': head_h, 'n': n,
         }
 
-    # Below: as many columns as fit in the plot width.
-    max_cols = max(1, int(plot_w_px / max(col_w, 1.0)))
-    n_cols = min(n, max_cols)
-    if n_cols < 2:
-        # Long labels / narrow plot: still split into several equal columns.
-        n_cols = min(n, max(2, int(math.ceil(math.sqrt(float(n))))))
-        col_w = plot_w_px / float(n_cols)
+    # Below: pack left with natural column width (do not stretch across the plot).
+    # Prefer a single row when every entry fits.
+    natural_w = float(col_w)
+    max_cols = max(1, int(plot_w_px / max(natural_w, 1.0)))
+    if n <= max_cols:
+        n_cols = n
+        rows = 1
+        col_w = natural_w
     else:
-        col_w = min(col_w, plot_w_px / float(n_cols))
-    rows = max(1, int(math.ceil(n / float(n_cols))))
+        n_cols = max_cols
+        rows = max(1, int(math.ceil(n / float(n_cols))))
+        max_rows = max(2, int(math.ceil(n / 3.0)))
+        while rows > max_rows and n_cols < n:
+            n_cols += 1
+            rows = max(1, int(math.ceil(n / float(n_cols))))
+        col_w = min(natural_w, plot_w_px / float(max(n_cols, 1)))
     total_w = min(plot_w_px, n_cols * col_w)
     return {
         'place': 'below', 'n_cols': n_cols, 'rows_per_col': rows,
@@ -602,16 +757,54 @@ class AxesGridOverlay(QWidget):
         self._paper = False
         self._paper_bg = QColor('#ffffff')
         self._z_stretch = 1.0
+        self._show_grid = True
+        self._square_grid = False
+        self._quadre_fmt = None  # (fmt_x, fmt_y) or None
         # Cross-view hover: (map_x, map_y) in this pane's CRS, role 'here'|'other'|None
         self._hover_xy = None
         self._hover_role = None
         self._hover_move = None  # callback(x_px, y_px) from dock
         self._hover_leave = None
+        # Find selection mark (map x,y in this pane's CRS), or None.
+        self._select_xy = None
+        # Profile on Plan: footprint + optional endpoint marks.
+        self._profile_poly = None
+        self._profile_a = None
+        self._profile_b = None
+        self._profile_ab = None
+        self._profile_click = None  # callback(px, py) while picking A/B
+        # Drag existing A/B: callback(which, map_x, map_y, phase) with
+        # phase in ('move', 'end'). which is 'A' or 'B'.
+        self._profile_drag = None
+        self._profile_drag_which = None
+        self._profile_hit_px = 12.0
         canvas.extentsChanged.connect(self.update)
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             canvas.scaleChanged.connect(lambda _s: self.update())
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             canvas.mapCanvasRefreshed.connect(self.update)
+
+    def set_show_grid(self, on):
+        on = bool(on)
+        if on == self._show_grid:
+            return
+        self._show_grid = on
+        self.update()
+
+    def set_square_grid(self, on):
+        on = bool(on)
+        self._square_grid = on
+        self.update()
+
+    def set_quadre_formatters(self, pair):
+        """``pair`` is ``(fmt_x, fmt_y)`` from ``quadre_grid.build_formatters``, or None."""
+        self._quadre_fmt = pair
+        self.update()
+
+    def axis_formatters(self):
+        if not self._square_grid or not self._quadre_fmt:
+            return None, None
+        return QG.for_axes(self.h_axis, self.v_axis, self._quadre_fmt)
 
     def set_cross_hover(self, map_x, map_y, role=None):
         """Show / clear the cross-view hover mark. ``role``: 'here', 'other', or None."""
@@ -627,6 +820,56 @@ class AxesGridOverlay(QWidget):
             return
         self._hover_xy = xy
         self._hover_role = role
+        self.update()
+
+    def set_selection_mark(self, map_x, map_y):
+        """Find selection ring in this pane's map CRS, or ``None`` to clear."""
+        if map_x is None or map_y is None:
+            if self._select_xy is None:
+                return
+            self._select_xy = None
+            self.update()
+            return
+        xy = (float(map_x), float(map_y))
+        if self._select_xy == xy:
+            return
+        self._select_xy = xy
+        self.update()
+
+    def set_profile_corridor(self, polygon_xy=None, a=None, b=None):
+        """Plan footprint + endpoint marks.
+
+        ``a`` / ``b`` are optional (x,y). A alone is enough to show a labeled mark
+        while picking B. Corridor fill needs both endpoints + ``polygon_xy``.
+        """
+        poly = None
+        if polygon_xy:
+            try:
+                poly = tuple(
+                    (float(p[0]), float(p[1])) for p in polygon_xy if p is not None
+                )
+            except (TypeError, ValueError, IndexError):
+                poly = None
+            if poly is not None and len(poly) < 3:
+                poly = None
+        pa = pb = None
+        if a is not None:
+            with suppress(TypeError, ValueError, IndexError):
+                pa = (float(a[0]), float(a[1]))
+        if b is not None:
+            with suppress(TypeError, ValueError, IndexError):
+                pb = (float(b[0]), float(b[1]))
+        if (
+            poly == self._profile_poly
+            and pa == getattr(self, '_profile_a', None)
+            and pb == getattr(self, '_profile_b', None)
+        ):
+            return
+        self._profile_poly = poly
+        self._profile_a = pa
+        self._profile_b = pb
+        # Keep legacy pair for any older callers/tests.
+        self._profile_ab = (pa, pb) if (pa is not None and pb is not None) else None
         self.update()
 
     def set_z_stretch(self, stretch):
@@ -655,15 +898,114 @@ class AxesGridOverlay(QWidget):
             return
         event.ignore()
 
+    def _profile_map_to_screen(self, xy):
+        if xy is None or self.canvas is None:
+            return None
+        try:
+            xform = self.canvas.getCoordinateTransform()
+            scr = xform.transform(QgsPointXY(float(xy[0]), float(xy[1])))
+            return float(scr.x()), float(scr.y())
+        except Exception:
+            return None
+
+    def _profile_screen_to_map(self, px, py):
+        if self.canvas is None:
+            return None
+        try:
+            xform = self.canvas.getCoordinateTransform()
+            pt = xform.toMapCoordinates(int(round(px)), int(round(py)))
+            return float(pt.x()), float(pt.y())
+        except Exception:
+            return None
+
+    def _hit_profile_endpoint(self, px, py):
+        """Return 'A' / 'B' if the cursor is on a profile mark (Plan only)."""
+        # Corridor marks only exist on Plan (x/y).
+        if self.h_axis != 'x' or self.v_axis != 'y':
+            return None
+        if getattr(self, '_profile_drag', None) is None:
+            return None
+        hit_r = float(getattr(self, '_profile_hit_px', 12.0) or 12.0)
+        best = None
+        best_d = hit_r
+        for label, xy in (
+            ('A', getattr(self, '_profile_a', None)),
+            ('B', getattr(self, '_profile_b', None)),
+        ):
+            scr = self._profile_map_to_screen(xy)
+            if scr is None:
+                continue
+            d = math.hypot(px - scr[0], py - scr[1])
+            if d <= best_d:
+                best_d = d
+                best = label
+        return best
+
+    def _restore_idle_cursor(self, px=None, py=None):
+        """Cross while picking; open-hand near A/B; else arrow."""
+        if getattr(self, '_profile_drag_which', None) is not None:
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            return
+        if getattr(self, '_profile_click', None) is not None:
+            if px is not None and py is not None and self._hit_profile_endpoint(px, py):
+                self.setCursor(Qt.CursorShape.OpenHandCursor)
+            else:
+                self.setCursor(Qt.CursorShape.CrossCursor)
+            return
+        if (
+            px is not None and py is not None
+            and self._hit_profile_endpoint(px, py) is not None
+        ):
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+            return
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+
+    def _finish_profile_drag(self, px, py):
+        which = getattr(self, '_profile_drag_which', None)
+        if which is None:
+            return False
+        self._profile_drag_which = None
+        xy = self._profile_screen_to_map(px, py)
+        cb = getattr(self, '_profile_drag', None)
+        if cb is not None and xy is not None:
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                cb(which, xy[0], xy[1], 'end')
+        self._restore_idle_cursor(px, py)
+        return True
+
     def mousePressEvent(self, event):
         if event.button() not in (Qt.MouseButton.LeftButton, Qt.MouseButton.MiddleButton):
             event.ignore()
+            return
+        pos = event.position() if hasattr(event, 'position') else event.pos()
+        px, py = float(pos.x()), float(pos.y())
+        # Drag existing A/B (takes priority over pick-to-place and pan).
+        if event.button() == Qt.MouseButton.LeftButton:
+            which = self._hit_profile_endpoint(px, py)
+            if which is not None and getattr(self, '_profile_drag', None) is not None:
+                self._profile_drag_which = which
+                self.setCursor(Qt.CursorShape.ClosedHandCursor)
+                xy = self._profile_screen_to_map(px, py)
+                cb = self._profile_drag
+                if cb is not None and xy is not None:
+                    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                        cb(which, xy[0], xy[1], 'move')
+                event.accept()
+                return
+        # Profile Pick A/B: left-click places a point instead of panning.
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and getattr(self, '_profile_click', None) is not None
+        ):
+            cb = self._profile_click
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                cb(px, py)
+            event.accept()
             return
         canvas = self.canvas
         if canvas is None or not hasattr(canvas, 'pan_start'):
             event.ignore()
             return
-        pos = event.position() if hasattr(event, 'position') else event.pos()
         canvas.pan_start(pos.x(), pos.y())
         self.setCursor(Qt.CursorShape.ClosedHandCursor)  # drag; idle cursor is Arrow
         event.accept()
@@ -672,10 +1014,25 @@ class AxesGridOverlay(QWidget):
         canvas = self.canvas
         pos = event.position() if hasattr(event, 'position') else event.pos()
         px, py = float(pos.x()), float(pos.y())
+        which = getattr(self, '_profile_drag_which', None)
+        if which is not None:
+            xy = self._profile_screen_to_map(px, py)
+            cb = getattr(self, '_profile_drag', None)
+            if cb is not None and xy is not None:
+                with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                    cb(which, xy[0], xy[1], 'move')
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            event.accept()
+            return
         if canvas is not None and getattr(canvas, '_pan_last', None) is not None:
             canvas.pan_move(px, py)
             event.accept()
             return
+        # Hover affordance near A/B (even while Pick cue is active).
+        if self._hit_profile_endpoint(px, py) is not None:
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+        elif getattr(self, '_profile_click', None) is not None:
+            self.setCursor(Qt.CursorShape.CrossCursor)
         cb = getattr(self, '_hover_move', None)
         if cb is not None:
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
@@ -685,13 +1042,28 @@ class AxesGridOverlay(QWidget):
         event.ignore()
 
     def mouseReleaseEvent(self, event):
+        pos = event.position() if hasattr(event, 'position') else event.pos()
+        px, py = float(pos.x()), float(pos.y())
+        if self._finish_profile_drag(px, py):
+            event.accept()
+            return
         canvas = self.canvas
         if canvas is not None and hasattr(canvas, 'pan_end'):
             canvas.pan_end()
-        self.setCursor(Qt.CursorShape.ArrowCursor)
+        self._restore_idle_cursor(px, py)
         event.accept()
 
     def leaveEvent(self, event):
+        # If dragging out of the pane, commit at the last known mark position.
+        which = getattr(self, '_profile_drag_which', None)
+        if which is not None:
+            self._profile_drag_which = None
+            xy = getattr(self, '_profile_a' if which == 'A' else '_profile_b', None)
+            cb = getattr(self, '_profile_drag', None)
+            if cb is not None and xy is not None:
+                with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                    cb(which, float(xy[0]), float(xy[1]), 'end')
+            self.setCursor(Qt.CursorShape.ArrowCursor)
         cb = getattr(self, '_hover_leave', None)
         if cb is not None:
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
@@ -793,9 +1165,9 @@ class AxesGridOverlay(QWidget):
     def _plot_frame(self, xform, w, h):
         """Axis box of the data footprint (small pad), clamped to the pane.
 
-        Fit keeps isotropic metres (letterbox), but ticks must not label empty
-        margins as excavation metres. When zoomed in, the frame stays on the
-        pad box so axes do not jump off the window.
+        Fit keeps isotropic metres (letterbox). Planar tick bounds stay on
+        whole metres (Lite ``tickMin/Max``) so grid cells are always 1 m even
+        after the screen clamp makes ``xmin…ymax`` slightly fractional.
         """
         pad_l, pad_r, pad_t, pad_b = self.pads()
         panel_left, panel_right = float(pad_l), float(w - pad_r)
@@ -803,6 +1175,7 @@ class AxesGridOverlay(QWidget):
         if panel_right - panel_left < 20 or panel_bottom - panel_top < 20:
             return None
         left, right, top, bottom = panel_left, panel_right, panel_top, panel_bottom
+        tick_xmin = tick_xmax = tick_ymin = tick_ymax = None
         data = self._data_rect()
         if data is not None and not data.isEmpty():
             x0, x1, y0, y1 = snap_world_rect(
@@ -810,6 +1183,7 @@ class AxesGridOverlay(QWidget):
                 data.yMinimum(), data.yMaximum(),
                 self.h_axis, self.v_axis,
             )
+            tick_xmin, tick_xmax, tick_ymin, tick_ymax = x0, x1, y0, y1
             p_tl = xform.transform(QgsPointXY(x0, y1))
             p_br = xform.transform(QgsPointXY(x1, y0))
             dleft = min(p_tl.x(), p_br.x())
@@ -820,7 +1194,30 @@ class AxesGridOverlay(QWidget):
             right = min(dright, panel_right)
             top = max(dtop, panel_top)
             bottom = min(dbottom, panel_bottom)
-            if right - left < 20 or bottom - top < 20:
+            # Thin section bands (flat LONG or narrow TRANS) used to fall back to
+            # the full pane → enormous empty grid with the profile as a "fly".
+            # Pad the thin screen axis around the data; never jump to full panel
+            # while we still have a usable tick footprint.
+            if self.v_axis == 'z' and (
+                right - left < 20 or bottom - top < 20
+            ):
+                if right - left < 20:
+                    mid = 0.5 * (left + right)
+                    half = max(
+                        28.0, 0.5 * (right - left),
+                        (panel_right - panel_left) * 0.22,
+                    )
+                    left = max(panel_left, mid - half)
+                    right = min(panel_right, mid + half)
+                if bottom - top < 20:
+                    mid = 0.5 * (top + bottom)
+                    half = max(
+                        28.0, 0.5 * (bottom - top),
+                        (panel_bottom - panel_top) * 0.22,
+                    )
+                    top = max(panel_top, mid - half)
+                    bottom = min(panel_bottom, mid + half)
+            elif right - left < 20 or bottom - top < 20:
                 left, right, top, bottom = (
                     panel_left, panel_right, panel_top, panel_bottom
                 )
@@ -830,7 +1227,25 @@ class AxesGridOverlay(QWidget):
         xmax = max(tl.x(), br.x())
         ymin = min(tl.y(), br.y())
         ymax = max(tl.y(), br.y())
-        return left, right, top, bottom, xmin, xmax, ymin, ymax
+        # Fallback tick bounds when no data rect: still whole metres on planar axes.
+        if tick_xmin is None:
+            if _is_planar(self.h_axis):
+                tick_xmin, tick_xmax = _floor_m(xmin), _ceil_m(xmax)
+                if tick_xmax <= tick_xmin:
+                    tick_xmax = tick_xmin + 1.0
+            else:
+                tick_xmin, tick_xmax = xmin, xmax
+            if _is_planar(self.v_axis):
+                tick_ymin, tick_ymax = _floor_m(ymin), _ceil_m(ymax)
+                if tick_ymax <= tick_ymin:
+                    tick_ymax = tick_ymin + 1.0
+            else:
+                tick_ymin, tick_ymax = ymin, ymax
+        return (
+            left, right, top, bottom,
+            xmin, xmax, ymin, ymax,
+            tick_xmin, tick_xmax, tick_ymin, tick_ymax,
+        )
 
     def _paint_axes(self, p):
         canvas = self.canvas
@@ -849,12 +1264,33 @@ class AxesGridOverlay(QWidget):
         frame = self._plot_frame(xform, w, h)
         if frame is None:
             return
-        left, right, top, bottom, xmin, xmax, ymin, ymax = frame
-        h_step, h_ticks = _ticks(xmin, xmax, self.h_axis, right - left)
-        v_step, v_pairs = _vertical_axis_ticks(
-            ymin, ymax, self.v_axis, bottom - top,
-            z_stretch=self.z_stretch(),
-        )
+        (
+            left, right, top, bottom,
+            xmin, xmax, ymin, ymax,
+            tick_xmin, tick_xmax, tick_ymin, tick_ymax,
+        ) = frame
+        # Grid / labels use whole-metre tick bounds (not the fractional clamp).
+        fmt_h, fmt_v = self.axis_formatters()
+        use_h = callable(fmt_h)
+        use_v = callable(fmt_v)
+        if use_h:
+            h_step, h_ticks = 1.0, QG.grid_lines(tick_xmin, tick_xmax)
+            h_labels = QG.cell_mids(tick_xmin, tick_xmax)
+        else:
+            h_step, h_ticks = _ticks(
+                tick_xmin, tick_xmax, self.h_axis, right - left,
+            )
+            h_labels = h_ticks
+        if use_v:
+            v_step = 1.0
+            v_pairs = [(t, t) for t in QG.grid_lines(tick_ymin, tick_ymax)]
+            v_labels = [(t, t) for t in QG.cell_mids(tick_ymin, tick_ymax)]
+        else:
+            v_step, v_pairs = _vertical_axis_ticks(
+                tick_ymin, tick_ymax, self.v_axis, bottom - top,
+                z_stretch=self.z_stretch(),
+            )
+            v_labels = v_pairs
         v_ticks = [m for m, _lab in v_pairs]
 
         def sx(map_x):
@@ -887,23 +1323,25 @@ class AxesGridOverlay(QWidget):
         p.drawRect(QRectF(0, top, left + 1, bottom - top))
         p.drawRect(QRectF(right - 1, top, w - right + 1, bottom - top))
 
-        p.setClipRect(QRectF(left, top, right - left, bottom - top))
-        p.setPen(QPen(grid, 1))
-        for tick in h_ticks:
-            x = sx(tick)
-            if x < left or x > right:
-                continue
-            _line(p, x, top, x, bottom)
-        for tick in v_ticks:
-            y = sy(tick)
-            if y < top or y > bottom:
-                continue
-            _line(p, left, y, right, y)
-        p.setClipping(False)
+        if self._show_grid:
+            p.setClipRect(QRectF(left, top, right - left, bottom - top))
+            p.setPen(QPen(grid, GRID_PEN_W))
+            for tick in h_ticks:
+                x = sx(tick)
+                if x < left or x > right:
+                    continue
+                _line(p, x, top, x, bottom)
+            for tick in v_ticks:
+                y = sy(tick)
+                if y < top or y > bottom:
+                    continue
+                _line(p, left, y, right, y)
+            p.setClipping(False)
 
+        # Complete data-frame outline (Lite), not only the classical L-axes.
+        p.setBrush(Qt.BrushStyle.NoBrush)
         p.setPen(QPen(axis, 1.25))
-        _line(p, left, top, left, bottom)
-        _line(p, left, bottom, right, bottom)
+        p.drawRect(QRectF(left, top, right - left, bottom - top))
 
         p.setPen(QPen(axis, 1))
         for tick in h_ticks:
@@ -921,41 +1359,121 @@ class AxesGridOverlay(QWidget):
         font.setPixelSize(10)
         p.setFont(font)
         p.setPen(label)
-        for tick in h_ticks:
+        for tick in h_labels:
             x = sx(tick)
             if x < left - 4 or x > right + 4:
                 continue
+            text = fmt_h(tick) if use_h else _fmt(tick, h_step, self.h_axis)
             p.drawText(
                 QRectF(x - 28, bottom + 7, 56, 16),
                 Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
-                _fmt(tick, h_step, self.h_axis),
+                text,
             )
-        for map_y, lab_v in v_pairs:
+        for map_y, lab_v in v_labels:
             y = sy(map_y)
             if y < top - 4 or y > bottom + 4:
                 continue
+            text = fmt_v(lab_v) if use_v else _fmt(lab_v, v_step, self.v_axis)
             p.drawText(
                 QRectF(28, y - 8, left - 36, 16),
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                _fmt(lab_v, v_step, self.v_axis),
+                text,
             )
 
         p.setPen(title)
+        h_title = self.h_label if use_h else '%s (m)' % self.h_label
         p.drawText(
             QRectF(left, bottom + 30, right - left, 18),
             Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
-            '%s (m)' % self.h_label,
+            h_title,
         )
         p.save()
         p.translate(max(12.0, left - 54.0), (top + bottom) / 2.0)
         p.rotate(-90)
+        v_title = (
+            self.v_label if use_v
+            else _z_axis_title(self.v_label, self.z_stretch())
+        )
         p.drawText(
             QRectF(-80, -10, 160, 20),
             Qt.AlignmentFlag.AlignCenter,
-            _z_axis_title(self.v_label, self.z_stretch()),
+            v_title,
         )
         p.restore()
+        self._paint_profile_corridor(p, xform, left, right, top, bottom)
         self._paint_cross_hover(p, xform, left, right, top, bottom)
+        self._paint_selection_mark(p, xform, left, right, top, bottom)
+
+    def _paint_profile_corridor(self, p, xform, left, right, top, bottom):
+        """Semi-transparent green XY footprint + labeled A/B marks (Plan)."""
+        # Only meaningful on Plan (x/y). Skip section panes.
+        if self.h_axis != 'x' or self.v_axis != 'y':
+            return
+        poly = getattr(self, '_profile_poly', None)
+        pa = getattr(self, '_profile_a', None)
+        pb = getattr(self, '_profile_b', None)
+        if (poly is None or len(poly) < 3) and pa is None and pb is None:
+            return
+        if xform is None:
+            return
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        p.setClipRect(QRectF(left, top, right - left, bottom - top))
+        if poly is not None and len(poly) >= 3:
+            pts = []
+            for mx, my in poly:
+                try:
+                    scr = xform.transform(QgsPointXY(mx, my))
+                    pts.append(QPointF(float(scr.x()), float(scr.y())))
+                except Exception:
+                    pts = []
+                    break
+            if len(pts) >= 3:
+                # Stronger green profile footprint.
+                p.setPen(QPen(QColor(0, 150, 35, 245), 2.2))
+                p.setBrush(QColor(20, 200, 55, 150))
+                p.drawPolygon(QPolygonF(pts))
+        if pa is not None and pb is not None:
+            try:
+                s0 = xform.transform(QgsPointXY(pa[0], pa[1]))
+                s1 = xform.transform(QgsPointXY(pb[0], pb[1]))
+                p.setPen(QPen(QColor(0, 140, 40, 240), 2.4))
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.drawLine(
+                    QPointF(float(s0.x()), float(s0.y())),
+                    QPointF(float(s1.x()), float(s1.y())),
+                )
+            except Exception:
+                pass
+        # A = red, B = blue (matches Pick A / Pick B cues).
+        self._paint_profile_endpoint(p, xform, pa, 'A', QColor(220, 30, 30, 245))
+        self._paint_profile_endpoint(p, xform, pb, 'B', QColor(30, 90, 230, 245))
+        p.setClipping(False)
+
+    def _paint_profile_endpoint(self, p, xform, xy, label, fill=None):
+        """Labeled A/B disc on Plan (visible as soon as that endpoint exists)."""
+        if xy is None or xform is None:
+            return
+        try:
+            scr = xform.transform(QgsPointXY(xy[0], xy[1]))
+            cx, cy = float(scr.x()), float(scr.y())
+        except Exception:
+            return
+        r = 6.0
+        brush = fill if fill is not None else QColor(30, 160, 60, 240)
+        p.setBrush(brush)
+        p.setPen(QPen(QColor(255, 255, 255, 230), 1.4))
+        p.drawEllipse(QPointF(cx, cy), r, r)
+        font = QFont()
+        font.setPixelSize(11)
+        font.setBold(True)
+        p.setFont(font)
+        ink = QColor(brush.red(), brush.green(), brush.blue(), 255)
+        p.setPen(QPen(ink))
+        p.drawText(
+            QRectF(cx + r + 2, cy - 10, 18, 16),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            str(label),
+        )
 
     def _paint_cross_hover(self, p, xform, left, right, top, bottom):
         """Blue ring (other panes) or filled disc (source pane) — Lite-style."""
@@ -986,6 +1504,26 @@ class AxesGridOverlay(QWidget):
             arm = r * 0.55
             p.drawLine(QPointF(cx - arm, cy), QPointF(cx + arm, cy))
             p.drawLine(QPointF(cx, cy - arm), QPointF(cx, cy + arm))
+
+    def _paint_selection_mark(self, p, xform, left, right, top, bottom):
+        """Green Find selection ring — Lite ``drawSelectedMark``."""
+        xy = getattr(self, '_select_xy', None)
+        if xy is None or xform is None:
+            return
+        try:
+            scr = xform.transform(QgsPointXY(xy[0], xy[1]))
+            cx, cy = float(scr.x()), float(scr.y())
+        except Exception:
+            return
+        if cx < left - 40 or cx > right + 40 or cy < top - 40 or cy > bottom + 40:
+            return
+        r = 12.0
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(QColor(34, 140, 64), 3.2))
+        p.drawEllipse(QPointF(cx, cy), r, r)
+        p.setPen(QPen(QColor(180, 240, 190), 1.4))
+        p.drawEllipse(QPointF(cx, cy), r, r)
 
     def paint_export_legend(self, p, plot_right, top, bottom):
         if self._paper:

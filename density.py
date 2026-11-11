@@ -7,15 +7,15 @@ only — never the fill surface.
 """
 from contextlib import suppress
 import math
+import os
+import tempfile
 
 from qgis.core import (
     Qgis,
-    QgsClassificationEqualInterval,
     QgsColorRampShader,
     QgsFeature,
     QgsGeometry,
     QgsGradientColorRamp,
-    QgsGraduatedSymbolRenderer,
     QgsLineSymbol,
     QgsProcessingFeedback,
     QgsSimpleLineSymbolLayer,
@@ -448,8 +448,9 @@ def _density_spec(vmin, vmax, levels, dmax=None):
 
     Matches QGIS Layer Styling → Singleband pseudocolor → Discrete →
     Equal interval → classifyColorRamp(): the last class upper bound is
-    +inf so the peak cell is always coloured. Isolines use the finite
-    class edges only (never a contour at the data peak when Max = peak).
+    +inf so the peak cell is always coloured. Isolines use every finite
+    class edge that is painted (first class included) — never a contour at
+    the data peak when Max = peak.
     """
     vmin = max(0.0, float(vmin))
     vmax = max(vmin, float(vmax))
@@ -466,6 +467,7 @@ def _density_spec(vmin, vmax, levels, dmax=None):
     # transparency then punched ONLY the global tip — secondary peaks looked fine.
     peak_slop = max(interval * 0.5, abs(dmax) * 1e-4, 1e-9)
     open_top = (dmax - vmax) <= peak_slop
+    # Class uppers (e.g. 55 for band 0–55). Never skip the first upper.
     isolines = [float(b) for b in breaks if b > interval * 1e-6]
     if open_top and isolines:
         # Drop the boundary of the open last class: that ring frames the hole
@@ -475,6 +477,14 @@ def _density_spec(vmin, vmax, levels, dmax=None):
         isolines.append(float(vmax))
     if not isolines:
         isolines = [float(vmin + interval)]
+    # Outer edge of the first painted class (Min). Without this, the 0–55
+    # band has no stroke against the empty background — only an inner ring
+    # at the first upper. Contour at exact 0 is meaningless / noisy.
+    floor_eps = _zero_density_eps(0.0, max(vmax, dmax))
+    if vmin > floor_eps and (
+        not isolines or abs(float(isolines[0]) - vmin) > interval * 0.05
+    ):
+        isolines.insert(0, float(vmin))
     return {
         'vmin': vmin,
         'vmax': vmax,
@@ -1022,40 +1032,164 @@ def style_heatmap(rlayer, opacity=0.7, scheme='viridis', levels=8,
     rlayer.triggerRepaint()
 
 
-def build_contours(rlayer, levels=8, clip_min=None, clip_max=None):
+def _contour_result_layer(result, name):
+    path = result.get('OUTPUT') if result else None
+    if not path:
+        return None
+    layer = path if isinstance(path, QgsVectorLayer) else QgsVectorLayer(
+        str(path), name, 'ogr',
+    )
+    if not layer.isValid() or layer.featureCount() < 1:
+        return None
+    return layer
+
+
+def _raster_gdal_path(rlayer):
+    """Filesystem path GDAL can open for the KDE raster."""
     if rlayer is None:
+        return ''
+    src = ''
+    with suppress(Exception):
+        src = str(rlayer.source() or '')
+    if not src:
+        with suppress(Exception):
+            src = str(rlayer.dataProvider().dataSourceUri() or '')
+    if not src:
+        return ''
+    # Drop provider key prefixes ("/vsicurl/...", still ok; "Atrribute=..." not).
+    if src.startswith('http://') or src.startswith('https://'):
+        return src
+    # Common QGIS form: path alone, or path with query options after '|'.
+    path = src.split('|', 1)[0].strip()
+    if path and (os.path.exists(path) or path.startswith('/vsi')):
+        return path
+    return path if path else ''
+
+
+def _contour_via_fixed_levels(rlayer, isolines):
+    """Build isolines at exact class edges (Min + every finite upper).
+
+    Uses GDAL -fl so the first class (e.g. outer Min and upper 55) is never
+    skipped by the interval rule ("first multiple greater than raster min").
+    """
+    if rlayer is None or not isolines:
         return None
-    spec = _spec_for_raster(rlayer, clip_min, clip_max, levels)
-    if spec is None or spec['interval'] <= 0:
+    src_path = _raster_gdal_path(rlayer)
+    if not src_path:
         return None
-    # Do not alter the display raster's nodata mask for contouring.
+    try:
+        from osgeo import gdal
+        gdal.UseExceptions()
+    except ImportError:
+        return None
+    levels = [float(v) for v in isolines]
+    fd, out_path = tempfile.mkstemp(prefix='arsys_iso_', suffix='.shp')
+    os.close(fd)
+    # Shapefile is a set of sidecars; remove the empty stub before create.
+    with suppress(OSError):
+        os.unlink(out_path)
+    opts = ['-a', 'ELEV', '-fl'] + ['%.10g' % v for v in levels]
+    try:
+        gdal.Contour(out_path, src_path, options=opts)
+    except Exception:
+        _unlink_shapefile(out_path)
+        return None
+    layer = QgsVectorLayer(out_path, rlayer.name() + ' · isolines', 'ogr')
+    if not layer.isValid() or layer.featureCount() < 1:
+        _unlink_shapefile(out_path)
+        return None
+    return layer
+
+
+def _unlink_shapefile(path):
+    if not path:
+        return
+    stem = os.path.splitext(path)[0]
+    for suffix in ('.shp', '.dbf', '.shx', '.prj', '.cpg', '.qix'):
+        with suppress(OSError):
+            os.unlink(stem + suffix)
+
+
+def _contour_via_gdal_fl(rlayer, isolines, interval):
+    """QGIS gdal:contour with EXTRA -fl (when direct Contour API is unavailable)."""
+    if rlayer is None or not isolines:
+        return None
+    fl = ' '.join('%.10g' % float(v) for v in isolines)
+    # Huge -i so interval alone yields no in-range lines; -fl supplies edges.
+    span = max(abs(float(isolines[-1])), abs(float(isolines[0])), float(interval), 1.0)
     params = {
         'INPUT': rlayer,
         'BAND': 1,
-        'INTERVAL': spec['interval'],
+        'INTERVAL': span * 100.0 + 1.0,
         'FIELD_NAME': 'ELEV',
         'CREATE_3D': False,
         'IGNORE_NODATA': True,
-        'OFFSET': spec['isolines'][0],
+        'OFFSET': 0.0,
+        'EXTRA': '-fl %s' % fl,
+        'OUTPUT': 'TEMPORARY_OUTPUT',
+    }
+    processing = _processing()
+    feedback = QgsProcessingFeedback()
+    name = rlayer.name() + ' · isolines'
+    for drop_ignore in (False, True):
+        run_params = dict(params)
+        if drop_ignore:
+            run_params.pop('IGNORE_NODATA', None)
+        with suppress(Exception):
+            result = processing.run('gdal:contour', run_params, feedback=feedback)
+            layer = _contour_result_layer(result, name)
+            if layer is not None:
+                return layer
+    return None
+
+
+def _contour_via_interval(rlayer, isolines, interval):
+    """Last resort: OFFSET+INTERVAL through gdal:contour / native:contour."""
+    if rlayer is None or not isolines:
+        return None
+    params = {
+        'INPUT': rlayer,
+        'BAND': 1,
+        'INTERVAL': max(float(interval), 1e-9),
+        'FIELD_NAME': 'ELEV',
+        'CREATE_3D': False,
+        'IGNORE_NODATA': True,
+        # Base at 0 so the first class upper (offset+1*interval when vmin~0)
+        # is requested; fixed-level paths above are preferred.
+        'OFFSET': float(isolines[0]),
         'OUTPUT': 'TEMPORARY_OUTPUT',
     }
     try:
         result = _run(_CONTOUR_IDS, params)
     except Exception:
         params.pop('IGNORE_NODATA', None)
-        result = _run(_CONTOUR_IDS, params)
-    path = result.get('OUTPUT')
-    if not path:
+        try:
+            result = _run(_CONTOUR_IDS, params)
+        except Exception:
+            return None
+    return _contour_result_layer(result, rlayer.name() + ' · isolines')
+
+
+def build_contours(rlayer, levels=8, clip_min=None, clip_max=None):
+    if rlayer is None:
         return None
-    layer = path if isinstance(path, QgsVectorLayer) else QgsVectorLayer(
-        str(path), rlayer.name() + ' · isolines', 'ogr',
-    )
-    if not layer.isValid() or layer.featureCount() < 1:
+    spec = _spec_for_raster(rlayer, clip_min, clip_max, levels)
+    if spec is None or spec['interval'] <= 0:
+        return None
+    isolines = [float(v) for v in spec['isolines']]
+    if not isolines:
+        return None
+    # Do not alter the display raster's nodata mask for contouring.
+    layer = _contour_via_fixed_levels(rlayer, isolines)
+    if layer is None:
+        layer = _contour_via_gdal_fl(rlayer, isolines, spec['interval'])
+    if layer is None:
+        layer = _contour_via_interval(rlayer, isolines, spec['interval'])
+    if layer is None:
         return None
     layer.setCustomProperty('arsysplotqgis', 'density-contour')
     layer = _merge_connected_isolines(layer)
-    return _keep_contour_levels(layer, spec['isolines'], spec['interval'])
-
+    return _keep_contour_levels(layer, isolines, spec['interval'])
 
 
 def _contour_elev_field(layer):
@@ -1383,33 +1517,32 @@ def _line_symbol(color, width):
     return sym
 
 
+def _contour_ink(for_paper=False, theme_name=None):
+    """Light UI → black isolines; dark UI → white. Paper export always black."""
+    if for_paper:
+        return '#000000'
+    name = theme_name
+    if name is None:
+        with suppress(Exception):
+            from .dock import UI_THEME
+            name = UI_THEME.get('name')
+    return '#ffffff' if name == 'dark' else '#000000'
+
+
 def style_contours(layer, with_heatmap=True, scheme='viridis', labels=False,
-                   width=0.15, invert=False):
+                   width=0.15, invert=False, for_paper=False, theme_name=None):
+    """Isolines: black on light / paper; white on dark canvas."""
     if layer is None:
         return
     width = max(0.0, min(1.0, float(width)))
-    invert = bool(invert)
-    field = 'ELEV' if layer.fields().lookupField('ELEV') >= 0 else (
-        layer.fields()[0].name() if layer.fields().count() else ''
-    )
-    if with_heatmap or not field:
-        layer.setRenderer(QgsSingleSymbolRenderer(_line_symbol('#000000', width)))
-    else:
-        ramp = make_ramp(scheme, invert=invert)
-        renderer = QgsGraduatedSymbolRenderer(field)
-        renderer.setSourceColorRamp(ramp)
-        try:
-            renderer.setClassificationMethod(QgsClassificationEqualInterval())
-            renderer.updateClasses(layer, 6)
-            for i in range(renderer.rangeCount()):
-                rng = renderer.ranges()[i]
-                color = rng.symbol().color() if rng.symbol() else QColor('#333')
-                renderer.updateRangeSymbol(i, _line_symbol(color, width))
-            layer.setRenderer(renderer)
-        except Exception:
-            layer.setRenderer(QgsSingleSymbolRenderer(_line_symbol('#3d348b', width)))
+    # with_heatmap / scheme / invert kept for call-site compatibility.
+    _ = (with_heatmap, scheme, invert)
+    ink = _contour_ink(for_paper=for_paper, theme_name=theme_name)
+    layer.setRenderer(QgsSingleSymbolRenderer(_line_symbol(ink, width)))
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         layer.setCustomProperty('arsysplotqgis_line_width', '%.3f' % width)
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        layer.setCustomProperty('arsysplotqgis_line_ink', ink)
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         layer.setOpacity(1.0)
     style_contour_labels(layer, on=labels, size_pt=None)
@@ -1425,7 +1558,7 @@ def split_pair(pair):
 
 
 def _build_isolines(raster, mode, levels, scheme, labels, clip_min, clip_max,
-                    line_width, invert=False):
+                    line_width, invert=False, for_paper=False):
     """Isoline overlay for the current class breaks. Not a fill layer."""
     need_lines = mode in ('contours', 'both') or bool(labels)
     if not need_lines:
@@ -1438,6 +1571,7 @@ def _build_isolines(raster, mode, levels, scheme, labels, clip_min, clip_max,
     style_contours(
         contours, with_heatmap=(mode != 'contours'),
         scheme=scheme, labels=labels, width=line_width, invert=invert,
+        for_paper=for_paper,
     )
     keep_private(contours)
     return contours
@@ -1464,7 +1598,7 @@ def build_pair(point_layer, radius, pixel, kernel, mode, levels, opacity,
         )
     contours = _build_isolines(
         raster, mode, levels, scheme, labels, clip_min, clip_max, line_width,
-        invert=invert,
+        invert=invert, for_paper=for_paper,
     )
     return raster, contours
 
@@ -1486,7 +1620,7 @@ def build_paper_pair(point_layer, radius, pixel, kernel, mode, levels, opacity,
 
 def restyle_pair(raster, contours, mode, levels, opacity, scheme='viridis',
                  labels=False, clip_min=None, clip_max=None, fill='bands',
-                 line_width=0.15, invert=False):
+                 line_width=0.15, invert=False, for_paper=False):
     """Reclassify the KDE raster and rebuild isolines. No KDE recompute."""
     if raster is None:
         release_private(contours)
@@ -1501,7 +1635,7 @@ def restyle_pair(raster, contours, mode, levels, opacity, scheme='viridis',
     release_private(contours)
     new_ctr = _build_isolines(
         raster, mode, levels, scheme, labels, clip_min, clip_max, line_width,
-        invert=invert,
+        invert=invert, for_paper=for_paper,
     )
     return raster, new_ctr
 

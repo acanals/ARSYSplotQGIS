@@ -2,11 +2,11 @@
 
 A QGIS 3 plugin designed to **support archaeostratigraphic analysis and interpretation** through the visualisation and spatial analysis of archaeological excavation XYZ data. 
 
-ARSYSplotQGIS provides an **independent archaeostratigraphic workspace** with three linked 2D projections of the excavation data — plan (X/Y), longitudinal section (X/Z) and transversal section (Y/Z) — and an interactive 3D view.
+ARSYSplotQGIS provides an **independent archaeostratigraphic workspace** with three linked 2D projections of the excavation data — plan (X/Y), longitudinal section (X/Z) and transversal section (Y/Z) — an optional **A–B profile**, and an interactive 3D view.
 
 Each 2D projection can display the spatial distribution of points and their **kernel-density distribution**, represented as heatmaps and contour lines. The 3D view provides an additional perspective for exploring the complete XYZ dataset.
 
-All views share the same data filters and group selection. The plugin operates in its own workspace: it does not add layers to the QGIS map canvas or legend.
+All views share the same data filters and group selection. The plugin operates in its own workspace: it does not add layers to the QGIS map canvas or legend (except when you explicitly use **To QGIS layer** / Profile → To QGIS).
 
 | View | Axes | Description |
 | --- | --- | --- |
@@ -15,7 +15,7 @@ All views share the same data filters and group selection. The plugin operates i
 | Transversal section | Y / Z | Cross-section |
 | 3D | X, Y, Z | Interactive 3D scatter plot |
 
-Filter data by **group** and **XYZ range**, display **points**, **orientation vectors**, or both, generate **kernel-density heatmaps** with contour lines, and export publication-ready **PNG figures** with axes and scale information.
+Filter data by **group** and **XYZ range**, **Find** records by attribute words, cut an **A–B profile**, display **points**, **orientation vectors**, or both, generate **kernel-density heatmaps** with contour lines, and export publication-ready **PNG figures** with axes and scale information.
 
 **Licence:** [GNU GPL-2.0-or-later](LICENSE) · © 2026 Antoni Canals-Salomó (URV IPHES-CERCA)
 
@@ -71,18 +71,19 @@ The ZIP archive must contain a folder named `ARSYSplotQGIS`, with `metadata.txt`
    - Mouse drag: pan.
    - **Zoom**: open an enlarged view.
    - **Reset**: restore the initial settings.
-6. Optionally, activate **Density → On** to generate a heatmap from the filtered points. Set **Draw → None** to display the density surface without the point cloud.
-7. Optionally, click **Open 3D view** to explore the same filtered dataset in three dimensions.
+6. Optionally, open **Options → Density** to generate a heatmap from the filtered points (opening the tab engages density and sets **Draw → None**).
+7. Optionally, open **Options → Profile**, pick A then B on Plan, and inspect LONG/TRANS.
+8. Optionally, click **Open 3D view** to explore the same filtered dataset in three dimensions.
 
 ---
 
 ## Data
 
-### Import CSV
+### Import CSV / spreadsheet
 
-**Import CSV** automatically detects the file encoding (UTF-8 or Latin-1) and field delimiter (comma, semicolon, tab or pipe).
+**Import** accepts **CSV** (encoding UTF-8 or Latin-1; delimiter comma, semicolon, tab or pipe) and spreadsheets **`.xlsx` / `.ods` / `.xls`** through the **GDAL/OGR drivers shipped with QGIS** (no extra pip packages). For spreadsheets, choose the sheet, then map columns.
 
-During import, map the CSV columns to the following fields:
+During import, map the columns to the following fields:
 
 | Field | Description |
 | --- | --- |
@@ -101,13 +102,17 @@ If P1 is missing but P2 and P3 are present, P1 is calculated as the midpoint of 
 
 After import, drawing always uses **P1 as the point** and **P2 → P3 as the vector**. Mixed files are allowed (some rows points-only, others with axes).
 
-Imported coordinates are stored in a private **PointZ memory layer**. Additional CSV columns are preserved as attributes.
+Imported coordinates are stored in a private **PointZ memory layer**. Additional table columns are preserved as attributes.
 
 ### Use selected layer
 
 Select any point layer already loaded in the QGIS project.
 
 ARSYSplotQGIS copies the points, all attributes, and the layer style (classification field, colours, and point size) into its private workspace. The original project layer is never modified.
+
+### Send to QGIS layer
+
+After data are loaded, use **Options → To QGIS layer** (footer next to Reset / Open 3D) to add a **memory** PointZ layer to the project legend with the **complete** attribute table (plugin Group/XYZ filters are ignored). Suitable for Processing, GRASS, etc. The plugin workspace is unchanged. Save As / make permanent yourself if you need the layer after closing the project.
 
 ### Sample data
 
@@ -161,11 +166,11 @@ The initial limits are calculated from the available coordinates (P1, P2, P3 or 
 
 ### Cross-view hover (Resources)
 
-With **Cross-view hover → On**, the point under the mouse on one main pane is marked on the other two (blue ring). Uses the same record in plan, longitudinal and transversal. Zoom windows and density are not involved.
+**Off by default.** With **Cross-view → On**, the point under the mouse on one main pane is marked on the other two (blue ring). Uses the same record in plan, longitudinal and transversal. Zoom windows are not driven by this.
 
 ### Stretch Z (Resources)
 
-Exaggerates the vertical axis on **Longitudinal (X/Z)** and **Transversal (Y/Z)** only. The plan stays isotropic.
+**Off by default.** Exaggerates the vertical axis on **Longitudinal (X/Z)** and **Transversal (Y/Z)** only. The plan stays isotropic.
 
 - **On** — apply the **Factor** (1 = true scale; 2 = Z drawn twice as tall, …).
 - Affects the on-screen sections, zoom windows and PNG export (including density on those panes).
@@ -198,14 +203,15 @@ Vector display options remain disabled until the imported data contains the requ
 
 ARSYSplotQGIS can generate a kernel-density surface from the **currently filtered points**.
 
-Density calculations use QGIS Processing (**heatmap KDE**). The fill is the **styled KDE raster** — the same approach as QGIS layer styling — not contour polygons. Isolines are line overlays only. Results stay in the plugin workspace and are not added to the QGIS project.
+Open the **Options → Density** tab to engage the surface (there is **no On switch**). Opening Density sets **Draw → None**. Density and **Profile** cannot show together: selecting one parks the other (A/B/Wide are kept). Opening **General** alone does not turn them off; use **General → Redraw** to park Density and Profile and show the loaded data.
+
+Density calculations use QGIS Processing (**heatmap KDE**). The fill is the **styled KDE raster** — the same approach as QGIS layer styling — not contour polygons. Isolines are line overlays only (including the outer **Min** edge of the first class). Results stay in the plugin workspace and are not added to the QGIS project.
 
 | Control | Description |
 | --- | --- |
-| **On** | Generate or remove the density surface |
 | **Show** | Display Heatmap, Isolines or Both |
 | **Fill** | **Bands** = discrete colour classes on the raster; **Cloud** = smooth interpolated colour. Same KDE either way. |
-| **Colour** | Select the colour palette (Viridis, Plasma, Magma, Inferno, etc.) |
+| **Colour** | Select the colour palette (Archeo, Viridis, Plasma, Magma, Inferno, etc.). **Invert** is under Resources → Density scale. |
 | **Min / Max** | One colour stretch for plan, X/Z and Y/Z. UI values are taken from the plan peak, then applied as **fractions of each view’s own peak** (Auto Max = 100% local peak). Below Min is not painted. |
 | **Auto** | Automatically set Min to the 2% cumulative cut of positive plan cells and Max to the plan peak |
 | **Radius** | Kernel bandwidth, expressed in map units. **Auto** suggests a suitable radius and cell size based on the data extent. |
@@ -218,7 +224,19 @@ Plan and sections do **not** share absolute KDE units. The Min/Max spinboxes are
 
 For section views, kernel dimensions are adjusted to prevent circular kernels from becoming excessively large along the thinner Z axis.
 
-To examine the density surface without the original point cloud, set **Draw → None**.
+### Profile
+
+**Options → Profile** cuts a vertical prism through the cloud using a line on Plan.
+
+- **Wide** (cm) — full horizontal width of the strip, perpendicular to A→B (XY only; all Z included).
+- Open the tab → pick **A** then **B** on Plan (or type X/Y). Drag A/B afterwards to adjust.
+- **LONG** / **TRANS** show the profile sections; thin levels may auto-enable Stretch Z.
+- **Resources → Profile export** — CSV of points in the profile, and optional To QGIS memory layers for LONG/TRANS.
+- **New Profile** clears A/B. Density is parked while Profile is active.
+
+### Find
+
+**Options → Find** searches attributes with exact words (AND/OR). Hits appear in a table; click a row for a green ring on the three views and a detail card. **Clear selection** removes the ring without clearing the query.
 
 ### Zoom Windows and Export
 
@@ -283,10 +301,8 @@ The QGIS Plugin Repository requires a GPL-compatible licence.
 
 The following features are not available in this version:
 
-- Identifying corresponding points across the different views.
 - Saving and restoring sessions with embedded data.
-- Excel and ODS import.
-- Exporting or adding density isolines directly to the QGIS project.
+- Exporting or adding density isolines / the KDE raster directly to the QGIS project (use Profile → To QGIS or Options → To QGIS layer for points).
 
 See the [issue tracker](https://github.com/acanals/ARSYSplotQGIS/issues) for planned improvements and development updates.
 

@@ -2,250 +2,329 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>ARSYSplotQGIS help</title>
+<title>How to use ARSYSplotQGIS</title>
 <style>
-  body { font: 15px/1.45 system-ui, sans-serif; color: #1a1816; max-width: 46rem; margin: 1.5rem auto; padding: 0 1rem; }
-  h1 { font-size: 1.5rem; margin-bottom: 0.3rem; }
-  h2 { font-size: 1.15rem; margin-top: 1.75rem; border-bottom: 1px solid #ddd; padding-bottom: 0.2rem; }
-  h3 { font-size: 1.02rem; margin-top: 1.25rem; }
-  table { border-collapse: collapse; width: 100%; margin: 0.6rem 0 1rem; }
-  th, td { border: 1px solid #ccc; padding: 0.35rem 0.5rem; text-align: left; vertical-align: top; }
-  th { background: #f4f1ec; }
-  code { font-family: ui-monospace, monospace; font-size: 0.9em; }
-  .lead { color: #444; }
-  ul, ol { margin: 0.4rem 0 0.8rem; }
-  li { margin: 0.25rem 0; }
-  .note { color: #444; font-size: 0.95em; }
-  nav.toc ul { list-style: none; padding-left: 0; }
-  nav.toc li { margin: 0.15rem 0; }
-  nav.toc a { color: #245; text-decoration: none; }
-  nav.toc a:hover { text-decoration: underline; }
-  p.to-toc { margin: 0.15rem 0 0.85rem; font-size: 0.9em; }
-  p.to-toc a { color: #245; text-decoration: none; }
-  p.to-toc a:hover { text-decoration: underline; }
-  a.back-toc {
-    position: fixed; right: 1rem; bottom: 1rem; z-index: 20;
-    display: inline-block; padding: 0.45rem 0.75rem;
-    font-size: 0.9em; font-weight: 600; color: #1a1816;
-    background: #f4f1ec; border: 1px solid #ccc; border-radius: 4px;
-    text-decoration: none; box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+  body {
+    font: 15px/1.5 system-ui, "Segoe UI", sans-serif;
+    color: #1a1816;
+    background: #ffffff;
+    max-width: 42rem;
+    margin: 1.25rem auto 3rem;
+    padding: 0 1rem 2rem;
   }
-  a.back-toc:hover { background: #ebe6dc; }
+  h1 { font-size: 1.45rem; margin: 0 0 0.35rem; }
+  h2 {
+    font-size: 1.12rem;
+    margin: 1.85rem 0 0.55rem;
+    padding-bottom: 0.25rem;
+    border-bottom: 1px solid #e0d6c8;
+  }
+  h3 { font-size: 1.02rem; margin: 1.15rem 0 0.4rem; color: #2b2622; }
+  p { margin: 0.45rem 0; }
+  .lead { color: #444; margin-bottom: 0.75rem; }
+  .note {
+    color: #5a554e;
+    font-size: 0.94em;
+    background: #faf7f2;
+    border-left: 3px solid #c8c0b4;
+    padding: 0.45rem 0.65rem;
+    margin: 0.65rem 0;
+  }
+  .example {
+    background: #faf7f2;
+    border: 1px solid #e0d6c8;
+    border-radius: 8px;
+    padding: 0.55rem 0.75rem;
+    margin: 0.7rem 0 1rem;
+  }
+  .example-title {
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #6b645c;
+    margin-bottom: 0.35rem;
+  }
+  .example p { margin: 0.3rem 0; }
+  ul, ol { margin: 0.35rem 0 0.75rem; padding-left: 1.25rem; }
+  li { margin: 0.28rem 0; }
+  code {
+    font-family: ui-monospace, "IBM Plex Mono", monospace;
+    font-size: 0.88em;
+    background: #f2ece3;
+    padding: 0.05em 0.3em;
+    border-radius: 3px;
+  }
+  table { border-collapse: collapse; width: 100%; margin: 0.55rem 0 0.9rem; font-size: 0.94em; }
+  th, td { border: 1px solid #d8d0c4; padding: 0.35rem 0.5rem; text-align: left; vertical-align: top; }
+  th { background: #f4f1ec; }
+  nav.toc {
+    background: #faf7f2;
+    border: 1px solid #e0d6c8;
+    border-radius: 8px;
+    padding: 0.65rem 0.85rem 0.75rem;
+    margin: 1rem 0 1.25rem;
+  }
+  nav.toc .toc-title {
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: #6b645c;
+    margin-bottom: 0.35rem;
+  }
+  nav.toc ul { list-style: none; padding: 0; margin: 0; }
+  nav.toc li { margin: 0.2rem 0; }
+  nav.toc a { color: #245a8c; text-decoration: none; }
+  nav.toc a:hover { text-decoration: underline; }
+  a { color: #245a8c; }
+  .to-toc { font-size: 0.88em; margin: 0.1rem 0 0.7rem; }
+  .to-toc a { text-decoration: none; }
+  .to-toc a:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
-<a class="back-toc" href="#toc" title="Back to contents">↑ Contents</a>
-<h1 id="toc">ARSYSplotQGIS</h1>
-<p class="lead">QGIS plugin for <strong>archaeostratigraphic exploration</strong> of excavation XYZ points: linked plan and sections, group and range filters, kernel density, PNG export and a lightweight 3D scatter. Part of the ArcheSystem suite (IPHES-CERCA URV). Counterpart of ARSYSplotLite.</p>
-<p class="note">Opens its <strong>own workspace</strong>. Nothing is added to the QGIS map canvas or layer legend.</p>
 
-<nav id="toc2" class="toc" aria-label="Contents">
-<ul>
-  <li><a href="#open">Open the plugin</a></li>
-  <li><a href="#quick">Quick start</a></li>
-  <li><a href="#views">Views and navigation</a></li>
-  <li><a href="#data">Data</a></li>
-  <li><a href="#options">Options panel</a></li>
-  <li><a href="#resources">Resources panel</a></li>
-  <li><a href="#density">Density (KDE)</a></li>
-  <li><a href="#kernels">Kernel functions and archaeology</a></li>
-  <li><a href="#export">Zoom, export and 3D</a></li>
-  <li><a href="#reset">Reset buttons</a></li>
-  <li><a href="#more">Requirements, licence, more</a></li>
-</ul>
+<h1 id="toc">How to use ARSYSplotQGIS</h1>
+<p class="lead">A plain-language guide to the QGIS plugin: what the buttons do, how to load excavation points, and how to export a true-scale figure. Button names match the English screen.</p>
+<p class="note"><strong>Not the same text as ARSYSplotLite’s <em>i</em> help.</strong> Both tools share the same reading ideas (plan + sections, Stretch&nbsp;Z, density, paper 1∶N), but this page describes the <strong>plugin</strong> workspace. The Lite <em>i</em> modal describes the browser app.</p>
+
+<nav class="toc" aria-label="Contents">
+  <div class="toc-title">Contents</div>
+  <ul>
+    <li><a href="#overview">What is this plugin?</a></li>
+    <li><a href="#open">Open it</a></li>
+    <li><a href="#screen">The screen</a></li>
+    <li><a href="#data">Your data</a></li>
+    <li><a href="#group">Colour by group</a></li>
+    <li><a href="#options">Drawing options</a></li>
+    <li><a href="#resources">Resources (filters &amp; Stretch&nbsp;Z)</a></li>
+    <li><a href="#density">Density</a></li>
+    <li><a href="#profile">Profile</a></li>
+    <li><a href="#find">Find a record</a></li>
+    <li><a href="#export">Saving a figure</a></li>
+    <li><a href="#reset">Reset buttons</a></li>
+    <li><a href="#limits">What it does not do</a></li>
+  </ul>
 </nav>
 
-<h2 id="open">Open the plugin</h2>
+<h2 id="overview">What is this plugin?</h2>
+<p class="to-toc"><a href="#toc">↑ Contents</a></p>
+<p>ARSYSplotQGIS helps you <strong>read excavation XYZ points in space</strong>: where finds sit in plan, and how they stack in depth — inside QGIS, without drawing on the main map.</p>
+<p>On one workspace you see three linked drawings:</p>
+<ul>
+  <li><strong>Plan</strong> — looking down (left–right = X, up–down = Y)</li>
+  <li><strong>Longitudinal</strong> — vertical cut along X, with height Z</li>
+  <li><strong>Transversal</strong> — vertical cut along Y, with height Z</li>
+</ul>
+<p>You can colour by material or level, hide groups, keep only a depth slice, exaggerate Z on sections (<strong>Stretch&nbsp;Z</strong>), show kernel density, search a record, open a large Zoom window or a simple 3D scatter, and export a paper figure at a real scale (for example 1∶50 with a 50&nbsp;cm scale bar).</p>
+<p class="note">The plugin opens its <strong>own window</strong>. Nothing is added to the QGIS map canvas or layer legend. Your project layers are never modified when you “Use selected layer” (a private copy is made).</p>
+
+<div class="example">
+  <div class="example-title">Everyday tip</div>
+  <p>Load the sample, turn Cross-view On, hover a flint in plan, and watch the blue mark appear on both sections. That is the same find in three projections.</p>
+</div>
+
+<h2 id="open">Open it</h2>
 <p class="to-toc"><a href="#toc">↑ Contents</a></p>
 <ul>
   <li>Toolbar icon, or <strong>Plugins → Vector → ARSYSplotQGIS</strong>.</li>
-  <li>This help: <strong>Help → Plugins → ARSYSplotQGIS</strong>.</li>
-  <li>Full documentation: project <a href="https://github.com/acanals/ARSYSplotQGIS">README on GitHub</a> (<code>homepage</code> in the Plugin Manager).</li>
+  <li>This help: the <strong>?</strong> next to Dark / Light, or <strong>Help → Plugins → ARSYSplotQGIS</strong> (same page).</li>
+  <li>README and issues: <a href="https://github.com/acanals/ARSYSplotQGIS">github.com/acanals/ARSYSplotQGIS</a>.</li>
 </ul>
 
-<h2 id="quick">Quick start</h2>
+<h2 id="screen">The screen</h2>
 <p class="to-toc"><a href="#toc">↑ Contents</a></p>
-<ol>
-  <li><strong>Load sample</strong> (bundled <code>sample.csv</code>), or <strong>Import CSV</strong>, or <strong>Use selected layer</strong>.</li>
-  <li>Toggle <strong>Group</strong> chips; adjust <strong>X / Y / Z</strong> under Resources → Filter.</li>
-  <li>Navigate: wheel = zoom, drag = pan; <strong>Zoom</strong> opens a large window; per-view <strong>Fit</strong> recentres.</li>
-  <li>Optional: <strong>Density → On</strong>. Use <strong>Draw → None</strong> to see the surface alone.</li>
-  <li>Optional: <strong>Stretch Z</strong>, <strong>Cross-view hover</strong>, <strong>Open 3D view</strong>.</li>
-</ol>
-
-<h2 id="views">Views and navigation</h2>
-<p class="to-toc"><a href="#toc">↑ Contents</a></p>
-<table>
-  <tr><th>View</th><th>Axes</th><th>Role in excavation reading</th></tr>
-  <tr><td>Plan</td><td>X / Y</td><td>Horizontal distribution (floors, spreads, grids)</td></tr>
-  <tr><td>Longitudinal</td><td>X / Z</td><td>Long section — depth structure along the trench length</td></tr>
-  <tr><td>Transversal</td><td>Y / Z</td><td>Cross-section — depth across the trench width</td></tr>
-  <tr><td>3D</td><td>X, Y, Z</td><td>Orbit / pan / zoom scatter (Qt painting, <em>not</em> QGIS 3D)</td></tr>
-</table>
-<p>All three 2D panes share the same filters and group selection. Dark / Light (top of Options) only changes the plugin UI theme.</p>
-
-<h2 id="data">Data</h2>
-<p class="to-toc"><a href="#toc">↑ Contents</a></p>
-<h3>Import CSV</h3>
-<p>Detects encoding (UTF-8 or Latin-1) and delimiter (comma, semicolon, tab or pipe). Map columns to:</p>
-<table>
-  <tr><th>Field</th><th>Meaning</th></tr>
-  <tr><td><strong>P1 X/Y/Z</strong></td><td>Object centre, or start of a P1→P2 vector</td></tr>
-  <tr><td><strong>P2 X/Y/Z</strong></td><td>End of P1→P2, or start of P2→P3 (optional)</td></tr>
-  <tr><td><strong>P3 X/Y/Z</strong></td><td>End of P2→P3 (optional)</td></tr>
-  <tr><td><strong>Group</strong></td><td>Classification used for colour (material, level, taxon, …)</td></tr>
-</table>
-<p>Layout is interpreted <strong>per row</strong>:</p>
-<ol>
-  <li><strong>P1 only</strong> — point; no orientation vector.</li>
-  <li><strong>P1 and P2, no P3</strong> — file stores vector P1→P2; the plugin stores P1 as the <strong>midpoint</strong>, and the axis as P2→P3.</li>
-  <li><strong>P1 + P2 + P3</strong> — unchanged: point = P1, vector = P2→P3.</li>
-</ol>
-<p>After import, drawing always uses <strong>P1 as the point</strong> and <strong>P2→P3 as the vector</strong>. Extra CSV columns are kept as attributes on a private PointZ memory layer.</p>
-
-<h3>Use selected layer</h3>
-<p>Copies the selected QGIS point layer (geometry, attributes, style hints for group / size / P2–P3 fields when present) into the private workspace. The project layer is never modified.</p>
-
-<h3>Load sample</h3>
-<p>Bundled <code>sample.csv</code> (ArcheSite1, ~2&nbsp;500 points). Columns:</p>
-<p><code>p1x | p1y | p1z | p2x | p2y | p2z | p3x | p3y | p3z | material | categoria | taxo | nivell</code></p>
-<p>P2/P3 filled only for <strong>nivell 1</strong>. Default Group field after load: <code>material</code>. Set Draw to Vectors/Both to see axes; filter Group → <code>nivell</code> = 1 to isolate them.</p>
-
-<h2 id="options">Options panel</h2>
-<p class="to-toc"><a href="#toc">↑ Contents</a></p>
-<table>
-  <tr><th>Control</th><th>What it does</th></tr>
-  <tr><td><strong>Dark / Light</strong></td><td>Plugin UI theme only (not the PNG export background).</td></tr>
-  <tr><td><strong>Group → Field</strong></td><td>Attribute used to colour chips and markers (material, level, …).</td></tr>
-  <tr><td><strong>Chips / All / None</strong></td><td>Show or hide classes. Empty attributes appear as <code>(empty)</code>.</td></tr>
-  <tr><td><strong>Load style… / Clear</strong></td><td>Optional text file: colour and <strong>Point model</strong> per group value (see <code>sample_style.txt</code>). Clear removes it.</td></tr>
-  <tr><td><strong>Adaptive frame</strong></td><td><strong>Off:</strong> keep full extent while filters hide points. <strong>On:</strong> re-fit the three canvases to the filtered cloud.</td></tr>
-  <tr><td><strong>Point model</strong></td><td>Default marker shape when no style-file shape applies: circle, square, diamond, triangles, polygons, star, cross, X (cross/X use group colour on the stroke).</td></tr>
-  <tr><td><strong>Point size</strong></td><td>Marker size in mm on the three 2D views.</td></tr>
-  <tr><td><strong>Arrow size</strong></td><td>Orientation-vector stroke / heads (enabled when P2/P3 data exist).</td></tr>
-  <tr><td><strong>Draw</strong></td><td><strong>Points</strong> (P1), <strong>Vectors</strong> (P2→P3), <strong>Both</strong>, or <strong>None</strong> (density alone).</td></tr>
-  <tr><td><strong>Density</strong></td><td>See <a href="#density">Density</a> below.</td></tr>
-  <tr><td><strong>Reset</strong> (footer)</td><td>Full view reset — see <a href="#reset">Reset</a>.</td></tr>
-  <tr><td><strong>Open 3D view</strong></td><td>Separate 3D scatter of the same filtered set.</td></tr>
-</table>
-
-<p><strong>Style file</strong> (UTF-8): a bare line starts a <em>field section</em> (matched to Group → Field). Entries are <code>value;colour</code> or <code>value;colour;shape</code>. A flat list before any section applies to the active field.</p>
-
-<h2 id="resources">Resources panel</h2>
-<p class="to-toc"><a href="#toc">↑ Contents</a></p>
-<h3>Filter (XYZ)</h3>
-<p>Three double sliders clip the cloud in X, Y and Z (limits from available P1/P2/P3 or geometry).</p>
-<p><strong>Reset</strong> under Filter restores <strong>full X/Y/Z ranges only</strong>. It does <em>not</em> change Point size, Draw, groups, Density or Stretch Z.</p>
-
-<h3>Stretch Z</h3>
-<p>Vertical exaggeration on <strong>Longitudinal</strong> and <strong>Transversal</strong> only. Plan stays isotropic (true scale).</p>
+<h3>Left column</h3>
 <ul>
-  <li><strong>On</strong> + <strong>Factor</strong> — 1 = true scale; 2 = Z drawn twice as tall as X/Y, and so on.</li>
-  <li>Applies to screen, zoom windows, PNG export and density on those panes.</li>
-  <li>Tick labels remain <strong>real metres</strong>; the axis title shows the factor (e.g. <code>Z ×5 (m)</code>).</li>
+  <li><strong>Dark / Light</strong> — workspace chrome only. Paper export stays on a white sheet.</li>
+  <li><strong>?</strong> — this help.</li>
+  <li><strong>Load Data</strong> — Import CSV, Load sample, or Use selected layer.</li>
+  <li><strong>Group</strong> — which field colours the points, chips to show/hide values, Load style… / Clear.</li>
+  <li><strong>Options</strong> — tabs General, Density, Find, <strong>Profile</strong>. Footer: Reset, <strong>To QGIS layer</strong>, Open 3D view.</li>
+</ul>
+<h3>Right side</h3>
+<ul>
+  <li>Three drawing panes (Plan / Long / Trans) with Zoom, Fit and Export on each.</li>
+  <li><strong>Resources</strong> — Filter (X/Y/Z dual ranges), Stretch&nbsp;Z, Cross-view, Density scale when density is on, and Profile export (CSV / To QGIS) when a profile is active.</li>
+</ul>
+<h3>Moving around a drawing</h3>
+<ul>
+  <li>Mouse wheel = zoom; drag = pan; <strong>Fit</strong> recentres on the data frame.</li>
+  <li><strong>Zoom</strong> opens a large floating window of that pane (Esc closes).</li>
+  <li>With <strong>Point info</strong> on, rest on a point to see its attributes.</li>
+</ul>
+
+<div class="example">
+  <div class="example-title">Quick start</div>
+  <p>1. Press <strong>Load sample</strong>. 2. Toggle a few Group chips. 3. Under Resources, narrow Z a little. 4. Optional: open Options → Density (or Profile). 5. Export Plan at 1∶50 when you like what you see.</p>
+</div>
+
+<h2 id="data">Your data</h2>
+<p class="to-toc"><a href="#toc">↑ Contents</a></p>
+<p>Three ways in:</p>
+<ul>
+  <li><strong>Import</strong> — first choose <strong>File type</strong> (CSV or Spreadsheet), then <strong>Choose file…</strong>. For Excel/ODS pick the <strong>Sheet</strong>, then map P1/P2/P3/Group. Spreadsheets use QGIS GDAL/OGR (no extra packages).</li>
+  <li><strong>Load sample</strong> — bundled <code>sample.csv</code> (~2&nbsp;500 points) to try the tool.</li>
+  <li><strong>Use selected layer</strong> — copies the current QGIS point layer into the private workspace.</li>
+</ul>
+<p>After data are loaded, Options footer → <strong>To QGIS layer</strong> sends the <strong>full</strong> table (all attributes; plugin filters ignored) to the project as a <strong>memory</strong> point layer for Processing / GRASS. Save it yourself (GeoPackage…) if you want it after closing QGIS. Not under Load Data — that row only brings data <em>in</em>.</p>
+
+<h3>What every row needs</h3>
+<p>To draw a point you need position in space. In ArcheSystem language:</p>
+<ul>
+  <li><code>p1x</code> — left–right (X)</li>
+  <li><code>p1y</code> — forward–back (Y)</li>
+  <li><code>p1z</code> — height / depth (Z); if missing, treated as 0 so the point can still appear in plan</li>
+</ul>
+<p>Optional: <strong>P2</strong> and <strong>P3</strong> for an orientation axis. After import, drawing always uses <strong>P1 as the point</strong> and <strong>P2→P3 as the vector</strong>:</p>
+<ol>
+  <li><strong>P1 only</strong> — point; no vector.</li>
+  <li><strong>P1 + P2, no P3</strong> — file stored P1→P2; the plugin stores P1 as the midpoint and the axis as P2→P3.</li>
+  <li><strong>P1 + P2 + P3</strong> — unchanged.</li>
+</ol>
+<p>Extra CSV columns stay as attributes (useful for Group and Find).</p>
+
+<div class="example">
+  <div class="example-title">Sample file</div>
+  <p>Default Group after Load sample is <code>material</code>. P2/P3 are filled mainly for <code>nivell = 1</code>. Set Draw → Vectors or Both, then filter that level if you want to see orientation axes.</p>
+</div>
+
+<h2 id="group">Colour by group</h2>
+<p class="to-toc"><a href="#toc">↑ Contents</a></p>
+<ul>
+  <li><strong>Field</strong> — which attribute colours markers (material, level, taxon…).</li>
+  <li>Coloured <strong>chips</strong> — click to hide or show a value. Empty values appear as <code>(empty)</code>.</li>
+  <li><strong>All / None</strong> — show everything or clear the view quickly.</li>
+  <li><strong>Load style…</strong> — optional UTF-8 text file: colour and Point model shape per value (see <code>sample_style.txt</code>). <strong>Clear</strong> removes it.</li>
+</ul>
+<p>Style format: a bare line starts a field section; then <code>value;colour</code> or <code>value;colour;shape</code>. A flat list before any section applies to the active Group field.</p>
+
+<h2 id="options">Drawing options</h2>
+<p class="to-toc"><a href="#toc">↑ Contents</a></p>
+<p>These change how points and density look. They do not change your CSV or project layer on disk.</p>
+<ul>
+  <li><strong>Point size</strong> — marker size in millimetres on the three 2D views.</li>
+  <li><strong>Point model</strong> — default shape when the style file does not set one (circle, square, diamond, triangles, polygons, star, cross, X).</li>
+  <li><strong>Arrow size</strong> — head/stroke for P2→P3 (enabled when vectors exist).</li>
+  <li><strong>Draw</strong> — Points, Vectors, Both, or None (density alone). Opening the Density tab selects None automatically.</li>
+  <li><strong>Point info / Large</strong> — hover tip; Large shows every attribute.</li>
+  <li><strong>Adaptive frame</strong> — Off (default): full data frame stays fixed while filters hide points. On: re-fit the three canvases to the filtered cloud.</li>
+  <li><strong>Grid → Axis</strong> — metre network inside the closed data frame.</li>
+  <li><strong>Grid → Archeo</strong> — letter/number labels from <code>quadre</code> (e.g. R16) when the field matches X/Y. Independent of Axis grid.</li>
+  <li><strong>Redraw</strong> (General) — park Density and Profile and show the loaded data. Opening General alone does not turn them off.</li>
+</ul>
+
+<div class="example">
+  <div class="example-title">When to leave Adaptive off</div>
+  <p>You compare a thin Z slice with the whole section and want the same scale and axes as the unfiltered view.</p>
+</div>
+
+<h2 id="resources">Resources (filters &amp; Stretch&nbsp;Z)</h2>
+<p class="to-toc"><a href="#toc">↑ Contents</a></p>
+<h3>Filter</h3>
+<p>Three dual sliders keep only points inside X, Y and Z ranges. <strong>Reset</strong> under Filter restores <strong>full X/Y/Z only</strong> — it does not change Point size, Draw, groups, Density or Stretch&nbsp;Z.</p>
+<h3>Stretch&nbsp;Z</h3>
+<p><strong>Off by default.</strong> Vertical exaggeration on <strong>Longitudinal</strong> and <strong>Transversal</strong> only. Plan stays true scale.</p>
+<ul>
+  <li><strong>On</strong> + <strong>Factor</strong> — 1 = true; 5 = height drawn five times taller than X/Y.</li>
+  <li>Tick labels stay in <strong>real metres</strong>; the axis title shows e.g. <code>Z ×5 (m)</code>.</li>
+  <li>Applies to screen, Zoom windows, density on sections, and paper export of those panes.</li>
   <li>The paper scale bar uses the <strong>horizontal</strong> axis only (true map metres).</li>
   <li><strong>Reset</strong> sets Factor back to 1.</li>
 </ul>
-<p class="note">Useful when archaeological thickness is small relative to trench length/width: exaggeration makes contacts, floors and vertical clustering readable without changing the numbers on the axis.</p>
+<div class="example">
+  <div class="example-title">When to use Stretch&nbsp;Z</div>
+  <p>A 15&nbsp;cm occupation layer looks flat on a long trench. ×5 opens the layer vertically while X (or Y) stays readable in metres.</p>
+</div>
+<h3>Cross-view</h3>
+<p><strong>Off by default.</strong> With <strong>On</strong>, the record under the mouse on one main pane is marked on the other two (shared real XYZ). Zoom windows are not driven by this.</p>
+<h3>Density scale</h3>
+<p>When Density is on, Resources shows the colour scale and <strong>Invert</strong>. When Profile is active, Resources also shows <strong>Profile export</strong> (CSV and To&nbsp;QGIS for LONG/TRANS).</p>
 
-<h3>Cross-view hover</h3>
-<p>With <strong>On</strong>, the record under the mouse on one main pane is marked on the other two (shared real XYZ). Zoom windows and density picking are not involved. Helps tie a find in plan to its position in both sections.</p>
-
-<h2 id="density">Density (KDE)</h2>
+<h2 id="density">Density</h2>
 <p class="to-toc"><a href="#toc">↑ Contents</a></p>
-<p>Kernel density of the <strong>currently filtered</strong> points (QGIS Processing heatmap). Fill is the styled KDE raster; isolines are line overlays. Results stay inside the plugin.</p>
-<table>
-  <tr><th>Control</th><th>Description</th></tr>
-  <tr><td><strong>On</strong></td><td>Build or remove the density surface on plan and sections.</td></tr>
-  <tr><td><strong>Show</strong></td><td>Heatmap, Isolines, or Both.</td></tr>
-  <tr><td><strong>Fill</strong></td><td><strong>Bands</strong> = discrete colour classes; <strong>Cloud</strong> = smooth interpolation. Same underlying KDE.</td></tr>
-  <tr><td><strong>Colour / Invert</strong></td><td>Palette (Viridis, Plasma, Magma, Inferno, Archeo, …). Invert flips low↔high.</td></tr>
-  <tr><td><strong>Min / Max</strong></td><td>One stretch control for plan, X/Z and Y/Z. UI values come from the plan peak, then apply as <strong>fractions of each view’s own peak</strong> (Auto Max = 100% local peak). Below Min is not painted — avoids empty “noise” floor.</td></tr>
-  <tr><td><strong>Auto (2%)</strong></td><td>Min ≈ 2% cumulative cut of positive plan cells; Max = plan peak.</td></tr>
-  <tr><td><strong>Radius</strong></td><td>Kernel bandwidth in map units (how far each point “spreads”). <strong>Auto</strong> suggests radius and cell from the extent.</td></tr>
-  <tr><td><strong>Cell</strong></td><td>Raster resolution. Finer cells = sharper map, heavier compute.</td></tr>
-  <tr><td><strong>Kernel</strong></td><td>Weighting function — see <a href="#kernels">below</a>. Min/Max are recalculated when the kernel changes.</td></tr>
-  <tr><td><strong>Isolines / Labels</strong></td><td>Number of contour breaks; optional value labels on lines.</td></tr>
-  <tr><td><strong>Opacity</strong></td><td>Heatmap fill opacity; empty cells stay transparent.</td></tr>
-</table>
-<p class="note">Plan and sections do <strong>not</strong> share absolute KDE units. Sections adapt radius/cell so a circular kernel does not blow up along the short Z axis. Change Stretch Z after density is on: the surface is rebuilt so it stays aligned with the points.</p>
-
-<h2 id="kernels">Kernel functions and archaeology</h2>
-<p class="to-toc"><a href="#toc">↑ Contents</a></p>
-<p>All five kernels are standard KDE shapes available in QGIS Heatmap. They differ in <strong>how weight falls off with distance</strong> inside the Radius — not in the archaeological meaning of “density”, but in how <strong>sharp or soft</strong> concentrations appear. Radius still dominates the scale of the pattern; the kernel chooses the profile.</p>
-<table>
-  <tr><th>Kernel</th><th>Shape (within Radius)</th><th>Practical effect</th><th>Archaeological interest</th></tr>
-  <tr>
-    <td><strong>Quartic</strong> (default)</td>
-    <td>Smooth dome; weight → 0 at the edge</td>
-    <td>Balanced smoothing; few artefacts</td>
-    <td>Good first pass for occupation patches, spreads and general structure of the assemblage</td>
-  </tr>
-  <tr>
-    <td><strong>Epanechnikov</strong></td>
-    <td>Parabolic; similar to Quartic, slightly different curvature</td>
-    <td>Often close to Quartic on excavation clouds</td>
-    <td>Useful cross-check: if the map barely changes, the pattern is robust to kernel choice</td>
-  </tr>
-  <tr>
-    <td><strong>Triweight</strong></td>
-    <td>More peaked at the centre than Quartic</td>
-    <td>Stronger local maxima; weaker skirts</td>
-    <td>Emphasises dense cores (hearths, dumps, knapping foci) over diffuse background scatter</td>
-  </tr>
-  <tr>
-    <td><strong>Triangular</strong></td>
-    <td>Linear falloff (tent)</td>
-    <td>Sharper peaks than Quartic; still continuous</td>
-    <td>When you want clearer separation between neighbouring clusters without a hard cutoff</td>
-  </tr>
-  <tr>
-    <td><strong>Uniform</strong></td>
-    <td>Flat weight inside Radius; zero outside (“top hat”)</td>
-    <td>Blockier surfaces; abrupt edges at Radius</td>
-    <td>Closest to a “count in a search radius” reading — blunt patches, useful to compare with buffer-style reasoning</td>
-  </tr>
-</table>
-<p><strong>How to use them in practice</strong></p>
+<p>Kernel density of the <strong>currently filtered</strong> points (QGIS Processing heatmap). It is an exploratory surface, not a publication statistic by itself. Open the <strong>Density</strong> tab to build the surface (no On switch). <strong>Density and Profile cannot show together</strong> — selecting Density parks the profile (A/B kept); selecting Profile restores it and hides density. Opening <strong>General</strong> leaves them alone; use <strong>Redraw</strong> on the General tab to park Density and Profile and show the loaded data.</p>
 <ul>
-  <li>Start with <strong>Quartic</strong> + Auto Radius/Cell; read plan and both sections together.</li>
-  <li>If soft lobes merge distinct loci, try <strong>Triweight</strong> or <strong>Triangular</strong>, or reduce Radius.</li>
-  <li>If you need a conservative, radius-like envelope, try <strong>Uniform</strong>.</li>
-  <li>Always treat KDE as an <strong>exploratory visualisation</strong> of the filtered sample. Group filters and XYZ clips change the surface; document which subset you used.</li>
+  <li><strong>Show</strong> — Heatmap, Isolines, or Both.</li>
+  <li><strong>Fill</strong> — Bands (discrete classes) or Cloud (smooth). Same KDE underneath.</li>
+  <li><strong>Colour</strong> — palette (Archeo, Viridis…). Invert is under Resources.</li>
+  <li><strong>Min / Max + Auto</strong> — colour stretch. Auto ≈ 2% cut of positive plan cells / peak. Below Min is not painted.</li>
+  <li><strong>Radius + Auto</strong> — how far each point “spreads”; Auto also suggests Cell.</li>
+  <li><strong>Cell</strong> — raster resolution (finer = sharper, heavier).</li>
+  <li><strong>Kernel</strong> — Quartic (good first pass), Epanechnikov, Triweight, Triangular, Uniform. Radius dominates scale; the kernel chooses soft vs sharp peaks.</li>
+  <li><strong>Isolines / Labels / Opacity</strong> — contour count, labels, fill opacity.</li>
+</ul>
+<p class="note">Plan and sections do not share absolute KDE units. Sections shrink Radius/Cell so a circular kernel does not explode along short Z. Change Stretch&nbsp;Z with density on: the surface is rebuilt to stay aligned with the points.</p>
+<div class="example">
+  <div class="example-title">Starting suggestion</div>
+  <p>Open Density → Auto (Radius/Cell) → Heatmap + Bands → try Both if you want isolines on top. Start with Quartic.</p>
+</div>
+
+<h2 id="profile">Profile</h2>
+<p class="to-toc"><a href="#toc">↑ Contents</a></p>
+<p>Options → <strong>Profile</strong> cuts a vertical prism through the cloud using a line on Plan.</p>
+<ul>
+  <li><strong>Wide</strong> (cm) — horizontal width of the profile in XY (perpendicular to A→B). Default <strong>10&nbsp;cm</strong>, step 1&nbsp;cm. Not a Z thickness.</li>
+  <li>Open the tab → blinking cue on the <strong>Plan</strong> title bar asks for <strong>A</strong> (red), then <strong>B</strong> (blue). Click Plan (or type X/Y). After B, LONG/TRANS update automatically.</li>
+  <li>Once placed, drag <strong>A</strong> or <strong>B</strong> on Plan (open-hand cursor) to move them; the profile follows live and sections rebuild when you release.</li>
+  <li><strong>New Profile</strong> — clears A/B/overlay and starts Pick A again.</li>
+  <li>Records in the profile (Group ∩ Resources) fill <strong>LONG = dominant Plan axis × Z</strong> and <strong>TRANS = the other Plan axis × Z</strong> (same tick style as Plan — numbers on X, letters on Y; whole-metre frames). Thin levels auto-enable <strong>Stretch&nbsp;Z</strong> so the section is readable. Plan shows a green profile band; A (red) and B (blue) are labeled.</li>
+  <li>While Profile is active, <strong>Resources → Profile export</strong>:
+    <ul>
+      <li><strong>Export CSV…</strong> — site points in the profile (attributes + X/Y/Z + dist. A→B + offset). Default name <code>original_SelectedProfile_YYYYMMDD.csv</code>.</li>
+      <li><strong>To QGIS…</strong> — one <em>point</em> memory layer per chosen section (LONG and/or TRANS), same geometry as on screen. Does <strong>not</strong> export Plan XY or vectors. Save as GeoPackage to keep them.</li>
+    </ul>
+  </li>
+  <li>Profile and <strong>Density</strong> are mutually exclusive on screen (selecting one tab hides the other). <strong>General → Redraw</strong> parks both and shows the loaded data. <strong>A/B/Wide are kept</strong> when you open Density or use Redraw, so returning to Profile restores the same cut. <strong>New Profile</strong> clears them.</li>
 </ul>
 
-<h2 id="export">Zoom, export and 3D</h2>
+<h2 id="find">Find a record</h2>
 <p class="to-toc"><a href="#toc">↑ Contents</a></p>
-<h3>Per-view Zoom</h3>
-<p>Enlarged window of one pane with Fit. Esc closes. Stretch Z and filters apply; Cross-view hover does not drive Zoom windows.</p>
-
-<h3>PNG export</h3>
-<p>Paper figure of the <strong>data frame</strong> (not a UI screenshot): background, title, subtitle, 96 / 150 / 300 / 600 dpi, metre axes and grid, <strong>50 cm</strong> black-and-white scale bar (horizontal), group legend (title + glyphs; tall legends in columns below the plot), density legend when active.</p>
-
-<h3>3D view</h3>
+<p>Options → <strong>Find</strong>: exact-word search across attributes (AND / OR).</p>
 <ul>
-  <li>Drag = orbit; pan; wheel = zoom; Fit; Export PNG; Esc = close.</li>
-  <li>Shares group colours and Draw mode; group visibility, point and arrow size can be adjusted in the 3D window.</li>
-  <li>Qt painter — does not use the QGIS 3D engine.</li>
+  <li>Hits appear in a table with field-name headers; click a row (or Enter for the first hit).</li>
+  <li>A green ring marks the point on the three views; detail under the table shows every column.</li>
+  <li>If the point was hidden by a group or XYZ filter, the plugin can widen ranges / turn the group back on so you can see it.</li>
 </ul>
+
+<h2 id="export">Saving a figure</h2>
+<p class="to-toc"><a href="#toc">↑ Contents</a></p>
+<p>Each pane (or its Zoom window) has <strong>Export</strong>. The dialog builds a <strong>true-scale paper figure</strong> of the data frame — not a casual screenshot. Title: <strong>Export · Plan</strong> (or Longitudinal / Transversal).</p>
+<ul>
+  <li><strong>PNG or SVG</strong>; paper A5 / A4 / A3; portrait or landscape. Sheet always white.</li>
+  <li><strong>Scale</strong> — Automatic (neat 1∶N that fits) or Custom 1∶N (default N = 20; any N allowed). Custom keeps N and shows the computed drawn size.</li>
+  <li><strong>Frame</strong> — closed rectangle around the data footprint (not only L-axes).</li>
+  <li><strong>Grid</strong> — metre / excavation-square lines a little thicker than the frame so cells stay readable.</li>
+  <li><strong>Scale bar</strong> — prefers a fixed 50&nbsp;cm black/white bar; at extreme 1∶N picks another readable length. <strong>1∶N</strong> sits next to the bar.</li>
+  <li><strong>Include legend</strong> (default on) — group colour + Point model glyph. Beside the frame when there is room, otherwise below in columns.</li>
+  <li>Optional title / subtitle; optional plot-area fill <em>inside</em> the axes only.</li>
+  <li>PNG resolution 96 / 150 / 300 / 600 dpi (also used for density sampling on paper).</li>
+  <li>Density on the figure matches the screen (Stretch&nbsp;Z, Min/Max, Invert…).</li>
+</ul>
+<div class="example">
+  <div class="example-title">Example</div>
+  <p>Pin attention on Longitudinal, Stretch&nbsp;Z ×5, Density Both, then Export → A4 landscape → 1∶50 → PNG with legend. Drop the file into the report.</p>
+</div>
 
 <h2 id="reset">Reset buttons</h2>
 <p class="to-toc"><a href="#toc">↑ Contents</a></p>
 <table>
-  <tr><th>Where</th><th>Effect</th></tr>
-  <tr><td>Resources → <strong>Filter → Reset</strong></td><td>Full X/Y/Z only.</td></tr>
-  <tr><td>Resources → <strong>Stretch Z → Reset</strong></td><td>Factor = 1.</td></tr>
-  <tr><td>Options → <strong>Reset</strong></td><td>All groups on; full XYZ; default point/arrow sizes; Draw → Points; Adaptive off; re-fit main canvases (and open Zoom/3D). Density settings and Dark/Light unchanged.</td></tr>
+  <tr><th>Where</th><th>What it restores</th></tr>
+  <tr><td>Resources → Filter → <strong>Reset</strong></td><td>Full X/Y/Z ranges only</td></tr>
+  <tr><td>Resources → Stretch&nbsp;Z → <strong>Reset</strong></td><td>Factor = 1</td></tr>
+  <tr><td>Options → <strong>Reset</strong></td><td>All groups on; full XYZ; default sizes; Draw → Points; Adaptive off; re-fit canvases (and open Zoom/3D). Density and Dark/Light unchanged</td></tr>
 </table>
 
-<h2 id="more">Requirements, licence, more</h2>
+<h2 id="limits">What it does not do</h2>
 <p class="to-toc"><a href="#toc">↑ Contents</a></p>
 <ul>
-  <li>QGIS <strong>3.22+</strong> (tested on 3.40 / 3.44). Needs Processing Heatmap (KDE) and Contour.</li>
-  <li>No extra pip packages or internet at runtime.</li>
-  <li>Licence: <strong>GNU GPL-2.0-or-later</strong>.</li>
-  <li>Suite: <a href="https://arche.iphes.cat">ArcheSystem</a> · <a href="https://arche.iphes.cat/analytics">Analytics</a> (ARSYSplot / ARSYSplotLite).</li>
-  <li>Issues and README: <a href="https://github.com/acanals/ARSYSplotQGIS">github.com/acanals/ARSYSplotQGIS</a>.</li>
+  <li>Does not paint layers on the QGIS map or replace full ARSYSplot.</li>
+  <li>3D is a lightweight Qt scatter — <strong>not</strong> the QGIS 3D engine.</li>
+  <li>No dedicated Arche10 mode (many Arche10 exports still open as CSV). Lite covers Arche10 / Excel units UI in the browser; the plugin uses OGR for xlsx/ods/xls.</li>
+  <li>Density is exploratory visualisation of the filtered sample — document which subset you used.</li>
 </ul>
+<p>Needs QGIS <strong>3.22+</strong> (tested on 3.40 / 3.44), Processing Heatmap and Contour. Licence: <strong>GNU GPL-2.0-or-later</strong>. Suite: <a href="https://arche.iphes.cat">ArcheSystem</a> · <a href="https://arche.iphes.cat/analytics">Analytics</a>.</p>
+
 </body>
 </html>
