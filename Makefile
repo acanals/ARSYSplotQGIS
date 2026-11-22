@@ -21,6 +21,7 @@ zip:
 		-x '$(PLUGIN_NAME)/dist/**' \
 		-x '$(PLUGIN_NAME)/PUBLISH.md' \
 		-x '$(PLUGIN_NAME)/Makefile' \
+		-x '$(PLUGIN_NAME)/index_ORIGINAL.html' \
 		-x '$(PLUGIN_NAME)/scripts/*' \
 		-x '$(PLUGIN_NAME)/scripts/**' \
 		-x '$(PLUGIN_NAME)/.idea/*' \
@@ -29,9 +30,9 @@ zip:
 		-x '$(PLUGIN_NAME)/.vscode/**' \
 		-x '$(PLUGIN_NAME)/.cursor/*' \
 		-x '$(PLUGIN_NAME)/.cursor/**'
-	@if unzip -l $(OUT) | grep -E -q '(^|[[:space:]])($(PLUGIN_NAME)/)?(PUBLISH\.md|Makefile)([[:space:]]|$$)'; then \
-		echo "ERROR: PUBLISH.md or Makefile found inside $(OUT)"; \
-		unzip -l $(OUT) | grep -E 'PUBLISH\.md|Makefile'; \
+	@if unzip -l $(OUT) | grep -E -q '(^|[[:space:]])($(PLUGIN_NAME)/)?(PUBLISH\.md|Makefile|index_ORIGINAL\.html)([[:space:]]|$$)'; then \
+		echo "ERROR: excluded file found inside $(OUT)"; \
+		unzip -l $(OUT) | grep -E 'PUBLISH\.md|Makefile|index_ORIGINAL\.html'; \
 		exit 1; \
 	fi
 	rm -f dist/$(PLUGIN_NAME).latest.zip
