@@ -1,5 +1,5 @@
-# ARSYSplotQGIS group style book (UTF-8)
-# value;colour;point_model
+# ARSYSplot group colours (.colors) — UTF-8
+# Format (all versions): field section, then value;colour;shape
 # colour: #rrggbb   shape: circle square diamond triangle star cross cross2 …
 # A bare line starts a field section. Flat lines (before any section) apply
 # to whichever Group → Field is selected.

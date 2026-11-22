@@ -205,7 +205,18 @@ def snapped_data_extent(rect, h_axis, v_axis):
     return QgsRectangle(x0, y0, x1, y1)
 
 
-def _ticks(minv, maxv, axis, px_span):
+def _z_tick_limit(minv, maxv, step):
+    """Emit enough ticks for the whole Z span (old hard 80 cut fine steps mid-axis)."""
+    try:
+        need = int(math.ceil(
+            (float(maxv) - float(minv)) / max(abs(float(step)), 1e-12)
+        )) + 8
+    except (TypeError, ValueError, OverflowError, ZeroDivisionError):
+        need = 200
+    return max(200, min(need, 8000))
+
+
+def _ticks(minv, maxv, axis, px_span, z_step=None):
     minv, maxv = float(minv), float(maxv)
     if _is_planar(axis):
         # Inclusive metre lines: floor(min) … ceil(max). Every cell is 1 m,
@@ -227,17 +238,25 @@ def _ticks(minv, maxv, axis, px_span):
         return step, out
     span = max(maxv - minv, 1e-9)
     px_span = max(float(px_span), 1.0)
-    rough = span / 8.0
-    step = Z_STEPS[-1]
-    for s in Z_STEPS:
-        if s >= rough:
-            step = s
-            break
+    step = None
+    if axis == 'z' and z_step is not None:
+        with suppress(TypeError, ValueError):
+            cand = float(z_step)
+            if cand > 0:
+                step = cand
+    if step is None:
+        rough = span / 8.0
+        step = Z_STEPS[-1]
+        for s in Z_STEPS:
+            if s >= rough:
+                step = s
+                break
     start = math.ceil(minv / step - 1e-9) * step
     out = []
     v = start
     n = 0
-    while v <= maxv + step * 1e-6 and n < 80:
+    guard = _z_tick_limit(minv, maxv, step)
+    while v <= maxv + step * 1e-6 and n < guard:
         t = round(v / step) * step
         # Skip duplicates from float drift (same step slot twice).
         if not out or abs(out[-1] - t) > step * 1e-9:
@@ -313,11 +332,12 @@ def _scale_bar_label(metres):
     return '%g cm' % (m * 100.0)
 
 
-def _vertical_axis_ticks(ymin, ymax, v_axis, height_px, z_stretch=1.0):
+def _vertical_axis_ticks(ymin, ymax, v_axis, height_px, z_stretch=1.0, z_step=None):
     """Ticks for the vertical axis.
 
     When ``v_axis`` is Z and ``z_stretch`` ≠ 1, map coords are stretched but
     labels stay in real metres. Returns ``(step, [(map_y, label_value), …])``.
+    ``z_step`` (metres) overrides Auto when set; ``None`` keeps the Z_STEPS ladder.
     """
     try:
         stretch = float(z_stretch)
@@ -328,10 +348,13 @@ def _vertical_axis_ticks(ymin, ymax, v_axis, height_px, z_stretch=1.0):
     if v_axis == 'z' and abs(stretch - 1.0) > 1e-9:
         y0 = float(ymin) / stretch
         y1 = float(ymax) / stretch
-        step, ticks = _ticks(y0, y1, v_axis, height_px)
+        step, ticks = _ticks(y0, y1, v_axis, height_px, z_step=z_step)
         pairs = [(t * stretch, t) for t in ticks]
     else:
-        step, ticks = _ticks(ymin, ymax, v_axis, height_px)
+        step, ticks = _ticks(
+            ymin, ymax, v_axis, height_px,
+            z_step=z_step if v_axis == 'z' else None,
+        )
         pairs = [(t, t) for t in ticks]
     # Drop consecutive ticks that paint as the same label (first-Z double).
     cleaned = []
@@ -369,6 +392,7 @@ def paint_paper_axes(
     fmt_h=None,
     fmt_v=None,
     scale_n=None,
+    z_step=None,
 ):
     """Axes, metre grid and scale bar in output pixels (paper).
 
@@ -399,7 +423,7 @@ def paint_paper_axes(
         v_labels = [(t, t) for t in QG.cell_mids(ymin, ymax)]
     else:
         v_step, v_pairs = _vertical_axis_ticks(
-            ymin, ymax, v_axis, ph, z_stretch=z_stretch,
+            ymin, ymax, v_axis, ph, z_stretch=z_stretch, z_step=z_step,
         )
         v_labels = v_pairs
     v_ticks = [m for m, _lab in v_pairs]
@@ -455,9 +479,19 @@ def paint_paper_axes(
             Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
             text,
         )
-    for map_y, lab_v in v_labels:
+    thin_z = (not use_v) and v_axis == 'z'
+    last_label_y = None
+    n_vlab = len(v_labels)
+    min_lab_gap = max(8.0, mm_to_px(2.8, dpi))
+    for idx, (map_y, lab_v) in enumerate(v_labels):
         y = sy(map_y)
         if y < top - 2 or y > bottom + 2:
+            continue
+        is_edge = idx == 0 or idx == n_vlab - 1
+        if (
+            thin_z and not is_edge and last_label_y is not None
+            and abs(y - last_label_y) < min_lab_gap
+        ):
             continue
         text = fmt_v(lab_v) if use_v else _fmt(lab_v, v_step, v_axis)
         painter.drawText(
@@ -466,6 +500,7 @@ def paint_paper_axes(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
             text,
         )
+        last_label_y = y
 
     font.setPixelSize(pt_to_px(9, dpi))
     painter.setFont(font)
@@ -517,14 +552,15 @@ def paint_paper_axes(
     return bar_m, bar_px
 
 
-def _legend_col_width_px(items, field, dpi):
+def _legend_col_width_px(items, field, dpi, type_scale=1.0):
     """Natural column width from the longest label (+ glyph)."""
+    ts = max(0.85, float(type_scale or 1.0))
     font = QFont()
-    font.setPixelSize(pt_to_px(7, dpi))
+    font.setPixelSize(pt_to_px(7.0 * ts, dpi))
     metrics = QFontMetrics(font)
-    glyph = mm_to_px(1.1, dpi) * 2.0 + mm_to_px(1.6, dpi)
-    pad = mm_to_px(2.5, dpi)
-    min_col = mm_to_px(18, dpi)
+    glyph = mm_to_px(1.1 * ts, dpi) * 2.0 + mm_to_px(1.6 * ts, dpi)
+    pad = mm_to_px(2.5 * ts, dpi)
+    min_col = mm_to_px(18.0 * ts, dpi)
     max_label = 0
     for item in items or ():
         name, _c, _s = _unpack_legend_item(item)
@@ -540,7 +576,7 @@ def _legend_col_width_px(items, field, dpi):
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             max_label = max(max_label, hm.width(heading))
         font.setBold(False)
-    return min(mm_to_px(42, dpi), max(min_col, glyph + max_label + pad))
+    return min(mm_to_px(42.0 * ts, dpi), max(min_col, glyph + max_label + pad))
 
 
 def prefer_legend_place(
@@ -586,16 +622,19 @@ def paper_legend_plan(
     drawn_w_mm=None, drawn_h_mm=None,
     avail_w_mm=None, avail_h_mm=None,
     paper_w_mm=None, paper_h_mm=None,
+    type_scale=1.0,
 ):
     """Choose side (1 column) vs below (multi-column) for a complete legend.
 
     Placement prefers leftover letterbox space / paper orientation when the
     sizes are provided; otherwise falls back to “fits in height → side”.
+    ``type_scale`` grows row/glyph sizes with paper format (√ vs A4).
     """
     items = list(items or [])
-    row_h = mm_to_px(3.6, dpi)
-    head_h = row_h + mm_to_px(0.8, dpi) if (field or items) else 0.0
-    col_w = _legend_col_width_px(items, field, dpi)
+    ts = max(0.85, float(type_scale or 1.0))
+    row_h = mm_to_px(3.6 * ts, dpi)
+    head_h = row_h + mm_to_px(0.8 * ts, dpi) if (field or items) else 0.0
+    col_w = _legend_col_width_px(items, field, dpi, type_scale=ts)
     n = len(items)
     plot_h_px = max(1.0, float(plot_h_px))
     plot_w_px = max(1.0, float(plot_w_px))
@@ -678,14 +717,20 @@ def paper_legend_below_height_mm(plan, dpi=96.0):
     return max(8.0, float(plan['total_h']) / px_per_mm) + 2.0
 
 
-def paint_paper_legend(painter, items, field, x, top, bottom, dpi, ink, plan=None):
+def paint_paper_legend(
+    painter, items, field, x, top, bottom, dpi, ink, plan=None,
+    type_scale=1.0,
+):
     """Full group legend (side or below). Returns width used (px)."""
     items = list(items or [])
     if not items and not field:
         return 0.0
+    ts = max(0.85, float(type_scale or 1.0))
     if plan is None:
         avail_h = max(1.0, float(bottom) - float(top))
-        plan = paper_legend_plan(items, field, avail_h, mm_to_px(22, dpi), dpi)
+        plan = paper_legend_plan(
+            items, field, avail_h, mm_to_px(22, dpi), dpi, type_scale=ts,
+        )
     n_cols = int(plan['n_cols'])
     rows_per_col = int(plan['rows_per_col'])
     col_w = float(plan['col_w'])
@@ -695,7 +740,7 @@ def paint_paper_legend(painter, items, field, x, top, bottom, dpi, ink, plan=Non
     place = plan.get('place') or 'side'
 
     font = QFont()
-    font.setPixelSize(pt_to_px(7, dpi))
+    font.setPixelSize(pt_to_px(7.0 * ts, dpi))
     font.setBold(True)
     painter.setFont(font)
     painter.setPen(ink)
@@ -709,9 +754,9 @@ def paint_paper_legend(painter, items, field, x, top, bottom, dpi, ink, plan=Non
     font.setBold(False)
     painter.setFont(font)
     metrics = painter.fontMetrics()
-    r = max(1.4, mm_to_px(1.1, dpi))
-    text_x0 = r * 2 + mm_to_px(1.6, dpi)
-    text_w = max(4.0, col_w - text_x0 - mm_to_px(1.0, dpi))
+    r = max(1.4, mm_to_px(1.1 * ts, dpi))
+    text_x0 = r * 2 + mm_to_px(1.6 * ts, dpi)
+    text_w = max(4.0, col_w - text_x0 - mm_to_px(1.0 * ts, dpi))
     for i, item in enumerate(items):
         if place == 'below':
             # Left → right, then next row (natural reading order under the plot).
@@ -757,6 +802,7 @@ class AxesGridOverlay(QWidget):
         self._paper = False
         self._paper_bg = QColor('#ffffff')
         self._z_stretch = 1.0
+        self._z_step = None  # None = Auto (Z_STEPS ladder); else metres
         self._show_grid = True
         self._square_grid = False
         self._quadre_fmt = None  # (fmt_x, fmt_y) or None
@@ -778,6 +824,16 @@ class AxesGridOverlay(QWidget):
         self._profile_drag = None
         self._profile_drag_which = None
         self._profile_hit_px = 12.0
+        # Distance measure (two clicks in this pane's map CRS).
+        self._measure_a = None
+        self._measure_b = None
+        self._measure_live = None  # rubber-band end while A is set
+        self._measure_click = None  # callback(px, py)
+        self._measure_stroke = QColor(163, 230, 53, 245)  # default lime
+        self._escape_cb = None  # callback() for Esc (measure cancel, …)
+        # Click (no pan) on a point → Find fiche (dock callback(px, py)).
+        self._point_click = None
+        self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         canvas.extentsChanged.connect(self.update)
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             canvas.scaleChanged.connect(lambda _s: self.update())
@@ -836,6 +892,27 @@ class AxesGridOverlay(QWidget):
         self._select_xy = xy
         self.update()
 
+    def pixel_in_plot(self, px, py):
+        """True when ``(px, py)`` lies inside the data plot frame (not chrome)."""
+        canvas = self.canvas
+        if canvas is None:
+            return False
+        try:
+            w = float(canvas.width())
+            h = float(canvas.height())
+        except Exception:
+            return False
+        xform = canvas.getCoordinateTransform()
+        if xform is None or w < 8 or h < 8:
+            return False
+        frame = None
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            frame = self._plot_frame(xform, w, h)
+        if frame is None:
+            return False
+        left, right, top, bottom = frame[0], frame[1], frame[2], frame[3]
+        return left <= float(px) <= right and top <= float(py) <= bottom
+
     def set_profile_corridor(self, polygon_xy=None, a=None, b=None):
         """Plan footprint + endpoint marks.
 
@@ -886,6 +963,96 @@ class AxesGridOverlay(QWidget):
 
     def z_stretch(self):
         return float(getattr(self, '_z_stretch', 1.0) or 1.0)
+
+    def set_measure(self, a=None, b=None, live=None):
+        """Store measure endpoints in this pane's map CRS (may be Z-stretched)."""
+        def _xy(v):
+            if v is None:
+                return None
+            try:
+                return (float(v[0]), float(v[1]))
+            except (TypeError, ValueError, IndexError):
+                return None
+
+        pa, pb, pl = _xy(a), _xy(b), _xy(live)
+        if (
+            pa == getattr(self, '_measure_a', None)
+            and pb == getattr(self, '_measure_b', None)
+            and pl == getattr(self, '_measure_live', None)
+        ):
+            return
+        self._measure_a = pa
+        self._measure_b = pb
+        self._measure_live = pl
+        self.update()
+
+    def clear_measure(self):
+        if (
+            self._measure_a is None
+            and self._measure_b is None
+            and self._measure_live is None
+        ):
+            return
+        self._measure_a = None
+        self._measure_b = None
+        self._measure_live = None
+        self.update()
+
+    def _unstretch_map_xy(self, mx, my):
+        """Map CRS → real metres (undo Stretch Z on the vertical axis)."""
+        zs = self.z_stretch()
+        if zs <= 1e-12:
+            zs = 1.0
+        if self.v_axis == 'z':
+            return float(mx), float(my) / zs
+        if self.h_axis == 'z':
+            return float(mx) / zs, float(my)
+        return float(mx), float(my)
+
+    def measure_distance_m(self, a=None, b=None):
+        """Planar distance in **real metres** between two map points."""
+        pa = a if a is not None else getattr(self, '_measure_a', None)
+        pb = b if b is not None else getattr(self, '_measure_b', None)
+        if pa is None or pb is None:
+            return None
+        ax, ay = self._unstretch_map_xy(pa[0], pa[1])
+        bx, by = self._unstretch_map_xy(pb[0], pb[1])
+        return math.hypot(bx - ax, by - ay)
+
+    @staticmethod
+    def format_distance_m(dist_m):
+        if dist_m is None:
+            return ''
+        d = abs(float(dist_m))
+        if d < 0.01:
+            return '%.1f mm' % (d * 1000.0)
+        if d < 1.0:
+            return '%.1f cm' % (d * 100.0)
+        if d < 100.0:
+            return '%.2f m' % d
+        return '%.1f m' % d
+
+    def set_z_step(self, step):
+        """Fixed Z tick spacing in metres, or ``None`` / ≤0 for Auto."""
+        resolved = None
+        if step is not None:
+            with suppress(TypeError, ValueError):
+                cand = float(step)
+                if cand > 0:
+                    resolved = cand
+        prev = getattr(self, '_z_step', None)
+        if prev is None and resolved is None:
+            return
+        if (
+            prev is not None and resolved is not None
+            and abs(prev - resolved) < 1e-12
+        ):
+            return
+        self._z_step = resolved
+        self.update()
+
+    def z_step(self):
+        return getattr(self, '_z_step', None)
 
     def wheelEvent(self, event):
         canvas = self.canvas
@@ -942,9 +1109,12 @@ class AxesGridOverlay(QWidget):
         return best
 
     def _restore_idle_cursor(self, px=None, py=None):
-        """Cross while picking; open-hand near A/B; else arrow."""
+        """Cross while picking/measuring; open-hand near A/B; else arrow."""
         if getattr(self, '_profile_drag_which', None) is not None:
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            return
+        if getattr(self, '_measure_click', None) is not None:
+            self.setCursor(Qt.CursorShape.CrossCursor)
             return
         if getattr(self, '_profile_click', None) is not None:
             if px is not None and py is not None and self._hit_profile_endpoint(px, py):
@@ -992,6 +1162,17 @@ class AxesGridOverlay(QWidget):
                         cb(which, xy[0], xy[1], 'move')
                 event.accept()
                 return
+        # Distance measure: left-click places A then B (no pan).
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and getattr(self, '_measure_click', None) is not None
+        ):
+            self.setFocus(Qt.FocusReason.MouseFocusReason)
+            cb = self._measure_click
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                cb(px, py)
+            event.accept()
+            return
         # Profile Pick A/B: left-click places a point instead of panning.
         if (
             event.button() == Qt.MouseButton.LeftButton
@@ -1028,9 +1209,25 @@ class AxesGridOverlay(QWidget):
             canvas.pan_move(px, py)
             event.accept()
             return
+        # Measure rubber-band while waiting for B.
+        if (
+            getattr(self, '_measure_click', None) is not None
+            and getattr(self, '_measure_a', None) is not None
+            and getattr(self, '_measure_b', None) is None
+        ):
+            xy = self._profile_screen_to_map(px, py)
+            if xy is not None:
+                self.set_measure(
+                    a=self._measure_a, b=None, live=xy,
+                )
+            self.setCursor(Qt.CursorShape.CrossCursor)
+            event.accept()
+            return
         # Hover affordance near A/B (even while Pick cue is active).
         if self._hit_profile_endpoint(px, py) is not None:
             self.setCursor(Qt.CursorShape.OpenHandCursor)
+        elif getattr(self, '_measure_click', None) is not None:
+            self.setCursor(Qt.CursorShape.CrossCursor)
         elif getattr(self, '_profile_click', None) is not None:
             self.setCursor(Qt.CursorShape.CrossCursor)
         cb = getattr(self, '_hover_move', None)
@@ -1048,10 +1245,33 @@ class AxesGridOverlay(QWidget):
             event.accept()
             return
         canvas = self.canvas
+        dragged = False
         if canvas is not None and hasattr(canvas, 'pan_end'):
-            canvas.pan_end()
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                dragged = bool(canvas.pan_end())
+        # Lite parity: click (no pan) on a point opens the Find fiche.
+        if (
+            not dragged
+            and event.button() == Qt.MouseButton.LeftButton
+            and getattr(self, '_measure_click', None) is None
+            and getattr(self, '_profile_click', None) is None
+            and getattr(self, '_point_click', None) is not None
+        ):
+            cb = self._point_click
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                cb(px, py)
         self._restore_idle_cursor(px, py)
         event.accept()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            cb = getattr(self, '_escape_cb', None)
+            if cb is not None:
+                with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                    cb()
+                event.accept()
+                return
+        super().keyPressEvent(event)
 
     def leaveEvent(self, event):
         # If dragging out of the pane, commit at the last known mark position.
@@ -1289,6 +1509,7 @@ class AxesGridOverlay(QWidget):
             v_step, v_pairs = _vertical_axis_ticks(
                 tick_ymin, tick_ymax, self.v_axis, bottom - top,
                 z_stretch=self.z_stretch(),
+                z_step=self.z_step() if self.v_axis == 'z' else None,
             )
             v_labels = v_pairs
         v_ticks = [m for m, _lab in v_pairs]
@@ -1369,9 +1590,19 @@ class AxesGridOverlay(QWidget):
                 Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
                 text,
             )
-        for map_y, lab_v in v_labels:
+        # Keep every grid line; thin Z labels so fine steps stay readable.
+        thin_z = (not use_v) and self.v_axis == 'z'
+        last_label_y = None
+        n_vlab = len(v_labels)
+        for idx, (map_y, lab_v) in enumerate(v_labels):
             y = sy(map_y)
             if y < top - 4 or y > bottom + 4:
+                continue
+            is_edge = idx == 0 or idx == n_vlab - 1
+            if (
+                thin_z and not is_edge and last_label_y is not None
+                and abs(y - last_label_y) < 11
+            ):
                 continue
             text = fmt_v(lab_v) if use_v else _fmt(lab_v, v_step, self.v_axis)
             p.drawText(
@@ -1379,6 +1610,7 @@ class AxesGridOverlay(QWidget):
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                 text,
             )
+            last_label_y = y
 
         p.setPen(title)
         h_title = self.h_label if use_h else '%s (m)' % self.h_label
@@ -1401,8 +1633,101 @@ class AxesGridOverlay(QWidget):
         )
         p.restore()
         self._paint_profile_corridor(p, xform, left, right, top, bottom)
+        self._paint_measure(p, xform, left, right, top, bottom)
         self._paint_cross_hover(p, xform, left, right, top, bottom)
         self._paint_selection_mark(p, xform, left, right, top, bottom)
+
+    def _paint_measure(self, p, xform, left, right, top, bottom):
+        """Two-point distance: line + endpoints + real-metre label."""
+        pa = getattr(self, '_measure_a', None)
+        pb = getattr(self, '_measure_b', None)
+        live = getattr(self, '_measure_live', None)
+        end = pb if pb is not None else live
+        if pa is None or end is None or xform is None:
+            if pa is None:
+                return
+            # A alone: still show a mark.
+            end = None
+        try:
+            s0 = xform.transform(QgsPointXY(pa[0], pa[1]))
+            cx0, cy0 = float(s0.x()), float(s0.y())
+        except Exception:
+            return
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        p.setClipRect(QRectF(left, top, right - left, bottom - top))
+        stroke = getattr(self, '_measure_stroke', None)
+        if stroke is None or not isinstance(stroke, QColor) or not stroke.isValid():
+            stroke = QColor(163, 230, 53, 245)  # lime fallback
+        else:
+            stroke = QColor(stroke)
+        if end is not None:
+            try:
+                s1 = xform.transform(QgsPointXY(end[0], end[1]))
+                cx1, cy1 = float(s1.x()), float(s1.y())
+            except Exception:
+                cx1 = cy1 = None
+            if cx1 is not None:
+                lw = 3.2 if pb is not None else 2.4
+                dash = pb is None
+                # Dark halo under the stroke so Measure never reads as a Group chip.
+                halo = QColor(20, 18, 16, 210)
+                halo_pen = QPen(halo, lw * 1.85)
+                halo_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                if dash:
+                    halo_pen.setStyle(Qt.PenStyle.DashLine)
+                p.setPen(halo_pen)
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.drawLine(QPointF(cx0, cy0), QPointF(cx1, cy1))
+                pen = QPen(stroke, lw)
+                pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                if dash:
+                    pen.setStyle(Qt.PenStyle.DashLine)
+                p.setPen(pen)
+                p.drawLine(QPointF(cx0, cy0), QPointF(cx1, cy1))
+                if pb is not None:
+                    dist = self.measure_distance_m(pa, pb)
+                else:
+                    dist = None
+                if pb is not None and dist is not None:
+                    label = self.format_distance_m(dist)
+                    font = QFont()
+                    font.setPixelSize(12)
+                    font.setBold(True)
+                    p.setFont(font)
+                    fm = QFontMetrics(font)
+                    if hasattr(fm, 'horizontalAdvance'):
+                        tw = fm.horizontalAdvance(label) + 10
+                    else:
+                        tw = fm.width(label) + 10
+                    th = fm.height() + 6
+                    mx = 0.5 * (cx0 + cx1)
+                    my = 0.5 * (cy0 + cy1)
+                    box = QRectF(mx - tw * 0.5, my - th - 4, tw, th)
+                    p.setPen(Qt.PenStyle.NoPen)
+                    p.setBrush(QColor(28, 25, 22, 200))
+                    p.drawRoundedRect(box, 3, 3)
+                    p.setPen(QPen(QColor(255, 245, 230)))
+                    p.drawText(
+                        box,
+                        int(Qt.AlignmentFlag.AlignCenter),
+                        label,
+                    )
+                # End mark (dark rim + stroke fill + light edge)
+                p.setBrush(halo)
+                p.setPen(Qt.PenStyle.NoPen)
+                p.drawEllipse(QPointF(cx1, cy1), 7.0, 7.0)
+                p.setBrush(stroke)
+                p.setPen(QPen(QColor(255, 255, 255, 230), 1.4))
+                p.drawEllipse(QPointF(cx1, cy1), 5.5, 5.5)
+        # Start mark
+        halo = QColor(20, 18, 16, 210)
+        p.setBrush(halo)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawEllipse(QPointF(cx0, cy0), 7.0, 7.0)
+        p.setBrush(stroke)
+        p.setPen(QPen(QColor(255, 255, 255, 230), 1.4))
+        p.drawEllipse(QPointF(cx0, cy0), 5.5, 5.5)
+        p.setClipping(False)
 
     def _paint_profile_corridor(self, p, xform, left, right, top, bottom):
         """Semi-transparent green XY footprint + labeled A/B marks (Plan)."""
@@ -1515,12 +1840,13 @@ class AxesGridOverlay(QWidget):
             return
         if cx < left - 40 or cx > right + 40 or cy < top - 40 or cy > bottom + 40:
             return
-        r = 12.0
+        # Slightly tighter than the old fixed 12 px ring (Lite ≈ pointR+5, min 8).
+        r = 8.0
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         p.setBrush(Qt.BrushStyle.NoBrush)
-        p.setPen(QPen(QColor(34, 140, 64), 3.2))
+        p.setPen(QPen(QColor(34, 140, 64), 2.4))
         p.drawEllipse(QPointF(cx, cy), r, r)
-        p.setPen(QPen(QColor(180, 240, 190), 1.4))
+        p.setPen(QPen(QColor(180, 240, 190), 1.2))
         p.drawEllipse(QPointF(cx, cy), r, r)
 
     def paint_export_legend(self, p, plot_right, top, bottom):

@@ -7,6 +7,7 @@ __pycache__/
 dist/
 .idea/
 .vscode/
+enllacaQGIS.sh
 # Publisher notes — local only (also excluded from make zip)
 PUBLISH.md
 # SFTP / deploy credentials (also covered by .vscode/; keep explicit)

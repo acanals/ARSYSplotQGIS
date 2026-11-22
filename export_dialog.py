@@ -27,6 +27,8 @@ PAPER_MM = {
     'A5': (148.0, 210.0),
     'A4': (210.0, 297.0),
     'A3': (297.0, 420.0),
+    'A2': (420.0, 594.0),
+    'A1': (594.0, 841.0),
 }
 
 NICE_SCALES = (
@@ -93,6 +95,17 @@ def paper_size_mm(fmt, orientation):
     if str(orientation or '').lower().startswith('land'):
         w, h = h, w
     return w, h
+
+
+def paper_type_scale(paper_w_mm, paper_h_mm):
+    """Typography / legend scale vs A4 (√diagonal). A5≈0.9 · A3≈1.2 · A1≈1.7."""
+    import math
+    ref = math.hypot(297.0, 210.0)
+    diag = math.hypot(
+        max(1.0, float(paper_w_mm or 1.0)),
+        max(1.0, float(paper_h_mm or 1.0)),
+    )
+    return max(0.9, min(2.0, math.sqrt(diag / ref)))
 
 
 def pick_nice_scale(data_w_m, data_h_m, avail_w_mm, avail_h_mm):
@@ -239,18 +252,19 @@ def draw_header(painter, width, title, subtitle, bg, scale):
 
 
 class ExportImageDialog(QDialog):
-    """Paper export: PNG or SVG, A5/A4/A3, auto/custom 1∶N, dpi for PNG."""
+    """Paper export: PNG or SVG, A5–A1, auto/custom 1∶N, dpi for PNG."""
 
     def __init__(self, parent=None, title='', subtitle='', bg=None,
                  label_size_pt=None, density_on=False,
                  data_w_m=None, data_h_m=None, theme=None,
-                 reserve_legend=False):
+                 reserve_legend=False, for_3d=False):
         super().__init__(parent)
         win_name = (title or '').strip()
         self.setWindowTitle(
             ('Export · %s' % win_name) if win_name else 'Export plot'
         )
         self._density_on = bool(density_on)
+        self._for_3d = bool(for_3d)
         self._reserve_legend = bool(reserve_legend)
         self._data_w_m = float(data_w_m) if data_w_m else 0.0
         self._data_h_m = float(data_h_m) if data_h_m else 0.0
@@ -278,7 +292,7 @@ class ExportImageDialog(QDialog):
 
         # Paper + orientation
         self.cmb_paper = QComboBox()
-        for pid in ('A5', 'A4', 'A3'):
+        for pid in ('A5', 'A4', 'A3', 'A2', 'A1'):
             self.cmb_paper.addItem(pid, pid)
         self.cmb_paper.setCurrentIndex(1)
         orient_row = QHBoxLayout()
@@ -304,46 +318,59 @@ class ExportImageDialog(QDialog):
         paper_w.setLayout(paper_wrap)
         form.addRow('Paper', paper_w)
 
-        # Scale
-        scale_col = QVBoxLayout()
-        scale_col.setContentsMargins(0, 0, 0, 0)
-        scale_col.setSpacing(4)
-        scale_row = QHBoxLayout()
+        # Scale (map 1∶N — not used for perspective 3D)
+        muted = self._theme.get('disabled', '#888888')
         self.rad_scale_auto = QRadioButton('Automatic (fit paper)')
         self.rad_scale_custom = QRadioButton('Custom 1∶N')
         self.rad_scale_auto.setChecked(True)
-        scale_grp = QButtonGroup(self)
-        scale_grp.addButton(self.rad_scale_auto)
-        scale_grp.addButton(self.rad_scale_custom)
-        scale_row.addWidget(self.rad_scale_auto)
-        scale_row.addWidget(self.rad_scale_custom)
-        scale_row.addStretch(1)
-        scale_col.addLayout(scale_row)
-        n_row = QHBoxLayout()
-        n_row.addWidget(QLabel('N ='))
         self.spn_scale_n = QSpinBox()
         self.spn_scale_n.setRange(1, 100000)
         self.spn_scale_n.setValue(DEFAULT_SCALE_N)
         self.spn_scale_n.setEnabled(False)
         self.spn_scale_n.setMinimumHeight(28)
         self.spn_scale_n.setMinimumWidth(100)
-        n_row.addWidget(self.spn_scale_n)
-        n_row.addStretch(1)
-        scale_col.addLayout(n_row)
         self.lbl_scale_hint = QLabel('')
         self.lbl_scale_hint.setWordWrap(True)
         self.lbl_scale_hint.setMaximumHeight(52)
-        muted = self._theme.get('disabled', '#888888')
         self.lbl_scale_hint.setStyleSheet('color:%s;' % muted)
-        scale_col.addWidget(self.lbl_scale_hint)
-        scale_w = QWidget()
-        scale_w.setLayout(scale_col)
-        scale_w.setMinimumHeight(96)
-        form.addRow('Scale', scale_w)
+        if not self._for_3d:
+            scale_col = QVBoxLayout()
+            scale_col.setContentsMargins(0, 0, 0, 0)
+            scale_col.setSpacing(4)
+            scale_row = QHBoxLayout()
+            scale_grp = QButtonGroup(self)
+            scale_grp.addButton(self.rad_scale_auto)
+            scale_grp.addButton(self.rad_scale_custom)
+            scale_row.addWidget(self.rad_scale_auto)
+            scale_row.addWidget(self.rad_scale_custom)
+            scale_row.addStretch(1)
+            scale_col.addLayout(scale_row)
+            n_row = QHBoxLayout()
+            n_row.addWidget(QLabel('N ='))
+            n_row.addWidget(self.spn_scale_n)
+            n_row.addStretch(1)
+            scale_col.addLayout(n_row)
+            scale_col.addWidget(self.lbl_scale_hint)
+            scale_w = QWidget()
+            scale_w.setLayout(scale_col)
+            scale_w.setMinimumHeight(96)
+            form.addRow('Scale', scale_w)
 
         # Title / subtitle / background
         self.ed_title = QLineEdit(title or '')
         self.ed_sub = QLineEdit(subtitle or '')
+        self.chk_bg = QCheckBox(
+            'Colour inside frame' if self._for_3d else 'Colour inside axes'
+        )
+        self.chk_bg.setChecked(False)
+        self.chk_bg.setToolTip(
+            'Off (default): white plot area. On: fill colour only inside the '
+            + (
+                '3D frame. The paper sheet is always white.'
+                if self._for_3d else
+                'axes frame. The paper sheet is always white.'
+            )
+        )
         self.btn_bg = QPushButton()
         self.btn_bg.setFixedSize(72, 24)
         self.btn_bg.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -351,21 +378,36 @@ class ExportImageDialog(QDialog):
         self._sync_bg_btn()
         bg_row = QHBoxLayout()
         bg_row.setContentsMargins(0, 0, 0, 0)
+        bg_row.addWidget(self.chk_bg)
         bg_row.addWidget(self.btn_bg)
-        bg_row.addWidget(QLabel('Click to choose'), 1)
+        bg_row.addStretch(1)
+        bg_hint = QLabel('Paper sheet stays white.')
+        bg_hint.setStyleSheet('color:%s;' % muted0)
+        bg_wrap = QVBoxLayout()
+        bg_wrap.setContentsMargins(0, 0, 0, 0)
+        bg_wrap.setSpacing(2)
+        bg_wrap.addLayout(bg_row)
+        bg_wrap.addWidget(bg_hint)
+        bg_w = QWidget()
+        bg_w.setLayout(bg_wrap)
+        self.chk_bg.toggled.connect(self._sync_bg_fields)
 
         self.chk_legend = QCheckBox('Include legend')
         self.chk_legend.setChecked(True)
         self.chk_legend.setToolTip(
-            'Group legend beside or under the drawing (auto placement). '
-            'Density colour bar is separate and stays when density is on.'
+            'Group legend beside or under the drawing (auto placement).'
+            + (
+                ''
+                if self._for_3d else
+                ' Density colour bar is separate and stays when density is on.'
+            )
         )
         self.chk_legend.toggled.connect(self._sync_scale_hint)
 
         form.addRow('Title', self.ed_title)
         form.addRow('Subtitle', self.ed_sub)
         form.addRow('Legend', self.chk_legend)
-        form.addRow('Background', bg_row)
+        form.addRow('Plot background', bg_w)
 
         try:
             pt0 = int(label_size_pt) if label_size_pt is not None else DEFAULT_LEVEL_LABEL_PT
@@ -395,7 +437,13 @@ class ExportImageDialog(QDialog):
         self.cmb_dpi.setCurrentIndex(2)
         form.addRow('Resolution', self.cmb_dpi)
 
-        if self._density_on:
+        if self._for_3d:
+            hint = QLabel(
+                'Paper figure with a framed 3D view (perspective — not a map 1∶N). '
+                'PNG uses the chosen dpi; SVG keeps the frame and legend as vectors. '
+                'Optional group legend sits beside or under the frame.'
+            )
+        elif self._density_on:
             hint = QLabel(
                 'True-scale paper figure (data frame). '
                 'PNG uses the chosen dpi; SVG is vector (dpi still drives density sampling). '
@@ -437,9 +485,14 @@ class ExportImageDialog(QDialog):
         self.ed_sub.textChanged.connect(self._sync_scale_hint)
         self._sync_format_fields()
         self._sync_scale_fields()
+        self._sync_bg_fields()
         self._sync_paper_info()
-        self.setMinimumSize(500, 560 if self._density_on else 520)
-        self.resize(520, 600 if self._density_on else 560)
+        if self._for_3d:
+            self.setMinimumSize(500, 440)
+            self.resize(520, 480)
+        else:
+            self.setMinimumSize(500, 560 if self._density_on else 520)
+            self.resize(520, 600 if self._density_on else 560)
 
     def _sync_bg_btn(self):
         self.btn_bg.setStyleSheet(
@@ -448,8 +501,13 @@ class ExportImageDialog(QDialog):
         )
         self.btn_bg.setText(self._bg.name())
 
+    def _sync_bg_fields(self, *_args):
+        on = bool(self.chk_bg.isChecked())
+        self.btn_bg.setEnabled(on)
+        self._sync_bg_btn()
+
     def _pick_bg(self):
-        color = QColorDialog.getColor(self._bg, self, 'Background colour')
+        color = QColorDialog.getColor(self._bg, self, 'Plot background colour')
         if color.isValid():
             self._bg = QColor(color)
             self._sync_bg_btn()
@@ -534,6 +592,7 @@ class ExportImageDialog(QDialog):
             'title': self.ed_title.text().strip(),
             'subtitle': self.ed_sub.text().strip(),
             'show_legend': bool(self.chk_legend.isChecked()),
+            'use_background': bool(self.chk_bg.isChecked()),
             'bg': QColor(self._bg),
             'dpi': dpi,
         }

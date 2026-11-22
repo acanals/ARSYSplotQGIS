@@ -2,8 +2,8 @@
 name=ARSYSplotQGIS
 qgisMinimumVersion=3.22
 qgisMaximumVersion=3.99
-description=Archaeostratigraphic workspace for excavation XYZ points: plan, sections, A–B profile, density, Find, PNG export and 3D
-version=0.3.0
+description=Archaeostratigraphic workspace for excavation XYZ points: plan, sections, vectors (improved sense), A–B profile, density, Find, PNG export and 3D
+version=0.3.1
 author=Antoni Canals-Salomó (URV IPHES-CERCA)
 email=archesystem@iphes.cat
 about=ARSYSplotQGIS is a QGIS 3 plugin developed as the QGIS counterpart of ARSYSplotLite, part of the ArcheSystem archaeological software suite developed at IPHES-CERCA URV.
@@ -15,17 +15,25 @@ about=ARSYSplotQGIS is a QGIS 3 plugin developed as the QGIS counterpart of ARSY
     - Three linked 2D views: plan (X/Y), longitudinal section (X/Z) and transversal section (Y/Z).
     - Optional Stretch Z on the section views (vertical exaggeration; tick labels stay in real metres). Off by default.
     - Optional cross-view hover: highlight the same record across the three main panes. Off by default.
+    - Optional Measure (two-click distance in real metres) and live cursor Coordinates.
     - Optional 3D scatter view (X/Y/Z), with orbit, pan and zoom (plugin Qt viewer — not QGIS 3D).
 
     DATA AND FILTERING
     - Import CSV (comma, semicolon, tab or pipe) or spreadsheets (.xlsx / .ods / .xls via GDAL/OGR), load sample data or use a selected QGIS point layer.
-    - Map P1 (X, Y, Z) as the object position and optionally P2 → P3 to represent orientation vectors.
+    - Map P1 (X, Y, Z) as the object position and optionally P2 → P3 for orientation vectors.
+    - Per-row normalisation shared with ARSYSplot / Lite: P1-only (missing Z → 0); P1+P2 → midpoint + stored P2→P3; P1+P2+P3 kept; P2+P3 → P1 midpoint.
     - Colour points by group field (material, level, category, taxonomy, etc.).
     - Optional style file to set colour and marker shape per group.
     - Filter by group and X, Y and Z coordinate ranges.
     - Find: exact-word attribute search with hit table and green selection ring.
     - Adaptive frame to fit the full or filtered dataset.
     - Options → To QGIS layer: publish the full loaded table as a project memory layer (filters ignored).
+
+    VECTORS AND ANGLES
+    - Draw Points, Vectors, Both or None. Geometric axis after import is P2→P3.
+    - Arrow sense uses the improved method (adaptive flip when the vertical component points “up”), aligned with ARSYSplot / Lite.
+    - Optional Fixed shaft length in centimetres, centred on P1 (default Off; real P2–P3 length when Off).
+    - Attributes G_orientacio and G_pendent filled on import (existing finite values kept); Resources → Orientation → Recalculate overwrites from the axis.
 
     PROFILE
     - Manual A–B profile on Plan (Wide in cm): vertical prism; LONG/TRANS sections; CSV and To QGIS export.
@@ -58,7 +66,14 @@ deprecated=False
 hasProcessingProvider=False
 server=False
 tags=archaeology,archaeostratigraphy,excavation,stratigraphy,heatmap,kde,isolines,profile,3d,csv,points,sections
-changelog=0.3.0
+changelog=0.3.1
+    - Vectors: improved arrow sense (adaptive flip on significant upward Δz), same method as ARSYSplot / Lite
+    - Fixed shaft length in centimetres centred on P1 (default Off); Arrow size remains mm for the head
+    - G_orientacio / G_pendent written on import (keep finite file values); Resources → Orientation → Recalculate overwrites from P2→P3
+    - Import normalisation documented and aligned: P1-only Z→0; P1+P2 → mid + P2→P3; full P1+P2+P3; P2+P3 → P1 mid
+    - Resources: Measure (two-click distance in real metres); Orientation Recalculate; mosaic layout keeps Plan/Long/Trans proportions
+    - Draw / 3D / export use the directed axis consistently
+    0.3.0
     - Profile: A–B cut on Plan (Wide cm), pick/drag endpoints, LONG/TRANS sections, CSV and To QGIS export
     - Density ↔ Profile mutually exclusive on screen; General → Redraw parks both and shows loaded data
     - Density tab engages the surface (no On switch); isolines include the outer Min edge of the first class

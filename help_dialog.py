@@ -98,8 +98,8 @@ def show_help_dialog(parent=None):
     layout.addLayout(head)
 
     lead = QLabel(
-        'Plugin guide (plain language). Same page as Help → Plugins → '
-        'ARSYSplotQGIS — not the Lite browser “i” help.'
+        'Plugin guide. Same page as Help → Plugins → '
+        'ARSYSplotQGIS'
     )
     lead.setObjectName('helpLead')
     lead.setWordWrap(True)
@@ -111,12 +111,11 @@ def show_help_dialog(parent=None):
     browser.setPalette(_light_palette())
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         browser.setSearchPaths([os.path.dirname(path)])
+        # Keep this sheet minimal: QTextDocument CSS is fragile and must not
+        # fight the document <style> (titles, toc uppercase, note boxes, …).
         browser.document().setDefaultStyleSheet(
             'body { color:#1a1816; background-color:#ffffff; }'
             'a { color:#245a8c; }'
-            'th { background:#f4f1ec; color:#1a1816; }'
-            'td { color:#1a1816; }'
-            '.lead, .note { color:#444444; }'
         )
     browser.setSource(QUrl.fromLocalFile(path))
     layout.addWidget(browser, 1)

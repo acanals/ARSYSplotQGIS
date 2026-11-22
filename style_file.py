@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Personal group style book: field sections → value → colour + point model.
+"""ARSYSplot group colours book (``.colors``) — shared format for all editions.
 
-Text format (UTF-8), one entry per line::
+UTF-8 text file. Canonical extension: ``*.colors``.
+
+Format (field sections)::
 
     # comment
     silex;#ffffff;cross          # flat list (any active group field)
@@ -20,7 +22,7 @@ from contextlib import suppress
 
 from qgis.PyQt.QtGui import QColor
 
-from .layers import DEFAULT_MARKER, resolve_marker_shape
+from .layers import resolve_marker_shape
 
 
 def parse_color(text):
@@ -67,7 +69,7 @@ def _put_entry(target, value, color, shape, warnings, line_no):
 
 
 def parse_style_text(text, path=''):
-    """Parse style text into a book dict."""
+    """Parse ``.colors`` text into a book dict."""
     book = empty_book()
     book['path'] = path or ''
     warnings = book['warnings']
@@ -119,7 +121,7 @@ def parse_style_text(text, path=''):
 
 
 def load_style_file(path):
-    """Read UTF-8 (or latin-1 fallback) style file."""
+    """Read UTF-8 (or latin-1 fallback) ``.colors`` / style text file."""
     path = os_path(path)
     data = None
     last_err = None
@@ -131,7 +133,7 @@ def load_style_file(path):
         except (OSError, UnicodeError) as exc:
             last_err = exc
     if data is None:
-        raise OSError(str(last_err) if last_err else 'Cannot read style file')
+        raise OSError(str(last_err) if last_err else 'Cannot read colours file')
     return parse_style_text(data, path=path)
 
 
@@ -191,12 +193,12 @@ def maps_for_field(book, field_name):
 def summary_message(book, field_name=None):
     """Short status line after load / apply."""
     if not book:
-        return 'No style loaded.'
+        return 'No colours loaded.'
     n = int(book.get('n_entries') or 0)
-    path = book.get('path') or 'style'
+    path = book.get('path') or 'colours'
     base = os_basename(path)
     warn_n = len(book.get('warnings') or [])
-    parts = ['Style %s: %d entr%s' % (base, n, 'y' if n == 1 else 'ies')]
+    parts = ['Colours %s: %d entr%s' % (base, n, 'y' if n == 1 else 'ies')]
     if field_name:
         cmap, shapes = maps_for_field(book, field_name)
         parts.append(
@@ -214,4 +216,4 @@ def summary_message(book, field_name=None):
 
 def os_basename(path):
     import os
-    return os.path.basename(path) if path else 'style'
+    return os.path.basename(path) if path else 'colours'

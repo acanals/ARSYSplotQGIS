@@ -1,10 +1,10 @@
 # ARSYSplotQGIS
 
-A QGIS 3 plugin designed to **support archaeostratigraphic analysis and interpretation** through the visualisation and spatial analysis of archaeological excavation XYZ data. 
+A QGIS 3 plugin that is first of all a **viewer for coordinated excavation records**: each point is a find or measurement with XYZ coordinates from a site. When P2/P3 are available it also draws **vectors**, in the line of a **vector archaeology** concerned with **taphonomic** and **tafo-sedimentary** questions (fabric, preferential orientations, depositional context).
 
-ARSYSplotQGIS provides an **independent archaeostratigraphic workspace** with three linked 2D projections of the excavation data — plan (X/Y), longitudinal section (X/Z) and transversal section (Y/Z) — an optional **A–B profile**, and an interactive 3D view.
+It provides an **independent archaeostratigraphic workspace** with three linked 2D projections — plan (X/Y), longitudinal section (X/Z) and transversal section (Y/Z) — an optional **A–B profile**, and an interactive 3D view.
 
-Each 2D projection can display the spatial distribution of points and their **kernel-density distribution**, represented as heatmaps and contour lines. The 3D view provides an additional perspective for exploring the complete XYZ dataset.
+Each 2D projection can show the spatial distribution of **points** and **vectors**, plus **kernel-density** heatmaps and isolines. The 3D view offers another look at the same XYZ dataset.
 
 All views share the same data filters and group selection. The plugin operates in its own workspace: it does not add layers to the QGIS map canvas or legend (except when you explicitly use **To QGIS layer** / Profile → To QGIS).
 
@@ -15,7 +15,7 @@ All views share the same data filters and group selection. The plugin operates i
 | Transversal section | Y / Z | Cross-section |
 | 3D | X, Y, Z | Interactive 3D scatter plot |
 
-Filter data by **group** and **XYZ range**, **Find** records by attribute words, cut an **A–B profile**, display **points**, **orientation vectors**, or both, generate **kernel-density heatmaps** with contour lines, and export publication-ready **PNG figures** with axes and scale information.
+Filter by **group** and **XYZ range**, **Find** records, cut an **A–B profile**, display **points**, **vectors**, or both, generate **kernel-density heatmaps** with isolines, and export publication-ready **PNG/SVG figures** at a true paper scale.
 
 **Licence:** [GNU GPL-2.0-or-later](LICENSE) · © 2026 Antoni Canals-Salomó (URV IPHES-CERCA)
 
@@ -87,15 +87,16 @@ During import, map the columns to the following fields:
 
 | Field | Description |
 | --- | --- |
-| **P1 X / Y / Z** | Point, or start of a P1→P2 vector |
-| **P2 X / Y / Z** | End of a P1→P2 vector, or start of a P2→P3 vector (optional) |
-| **P3 X / Y / Z** | End of a P2→P3 vector (optional) |
+| **P1 X / Y** | Required for point-only imports (or start of a P1→P2 vector). |
+| **P1 Z** | Optional when importing **points only** (no P2/P3): missing Z is stored as **0**. Required when orientation columns are used. |
+| **P2 X / Y / Z** | End of a P1→P2 vector, or start of a P2→P3 vector (optional as a set; if used, X/Y/Z required) |
+| **P3 X / Y / Z** | End of a P2→P3 vector (optional as a set; if used, X/Y/Z required) |
 | **Group** | Classification attribute used to colour the data (material, level, etc.) |
 
 The layout is interpreted **per row**:
 
-1. **P1 only** — P1 is the point. No orientation vector.
-2. **P1 and P2, no P3** — the file stores the vector **P1 → P2**. The plugin transposes it: stored P2 is the original P1, stored P3 is the original P2, and stored P1 is the **midpoint** (object centre).
+1. **P1 only** — P1 is the point. No orientation vector. X/Y required; missing Z → 0.
+2. **P1 and P2, no P3** — the file stores the vector **P1 → P2**. The plugin transposes it: stored P2 is the original P1, stored P3 is the original P2, and stored P1 is the **midpoint** (object centre). X/Y/Z required on P1 and P2.
 3. **P1, P2 and P3** — coordinates are not modified. P1 is the point; the vector is **P2 → P3**.
 
 If P1 is missing but P2 and P3 are present, P1 is calculated as the midpoint of P2→P3.
@@ -112,7 +113,7 @@ ARSYSplotQGIS copies the points, all attributes, and the layer style (classifica
 
 ### Send to QGIS layer
 
-After data are loaded, use **Options → To QGIS layer** (footer next to Reset / Open 3D) to add a **memory** PointZ layer to the project legend with the **complete** attribute table (plugin Group/XYZ filters are ignored). Suitable for Processing, GRASS, etc. The plugin workspace is unchanged. Save As / make permanent yourself if you need the layer after closing the project.
+After data are loaded, use **Options → To QGIS layer** (footer next to Reset) to add a **memory** PointZ layer to the project legend with the **complete** attribute table (plugin Group/XYZ filters are ignored). Suitable for Processing, GRASS, etc. The plugin workspace is unchanged. Save As / make permanent yourself if you need the layer after closing the project. **Open 3D view** is under General → View.
 
 ### Sample data
 
@@ -142,7 +143,7 @@ The Group panel controls how the archaeological data is classified and displayed
 - **Coloured chips** — one for each unique attribute value. Click a chip to show or hide that group.
 - **All / None** — quickly enable or disable all groups.
 - **Empty values** — missing or empty attributes are displayed as `(empty)`.
-- **Load style…** — optional personal text file that sets **colour** and **Point model** per group value. **Clear** drops it. Bundled example: `sample_style.txt`.
+- **Load colours…** — optional ``.colors`` file (field sections + ``value;colour;shape``) shared with Lite / ARSYSplot. **Clear** drops it. Bundled example: `sample.colors`.
 
 Style file format (UTF-8):
 
@@ -168,6 +169,14 @@ The initial limits are calculated from the available coordinates (P1, P2, P3 or 
 
 **Off by default.** With **Cross-view → On**, the point under the mouse on one main pane is marked on the other two (blue ring). Uses the same record in plan, longitudinal and transversal. Zoom windows are not driven by this.
 
+### Measure (Resources)
+
+**Measure** picks two points (**A** then **B**) on Plan, Longitudinal or Transversal and reports the distance in **real metres** (Stretch Z does not change the value). You may switch view at any time (starts a new pair there). **Esc** or click **Measure** again to stop. Middle-drag still pans.
+
+### Orientation (Resources)
+
+**Recalculate** recomputes **`G_orientacio`** and **`G_pendent`** for every row that has a vector axis, using the improved P2→P3 method. Existing values are overwritten. Rows without an axis are skipped. Group/XYZ filters do not limit which rows are updated.
+
 ### Stretch Z (Resources)
 
 **Off by default.** Exaggerates the vertical axis on **Longitudinal (X/Z)** and **Transversal (Y/Z)** only. The plan stays isotropic.
@@ -191,13 +200,19 @@ Select which elements are displayed in the three 2D views.
 | Mode | Display |
 | --- | --- |
 | **Points** | P1 object centres (default) |
-| **Vectors** | P2 → P3 orientation vectors (or P1 → P2) |
+| **Vectors** | Orientation shafts along the directed P2→P3 axis |
 | **Both** | Object centres and orientation vectors |
 | **None** | Neither points nor vectors. Useful when displaying density alone. |
 
-**Point size** and **Arrow size** sliders control the appearance of the elements across all three 2D views.
+**Point size** and **Arrow size** sliders control marker and arrow-head size (mm) across all three 2D views.
 
-Vector display options remain disabled until the imported data contains the required orientation coordinates (P2/P3 or P1/P2).
+After import the geometric axis is always **P2 → P3**. The drawn arrow **sense** follows the **improved method** shared with ARSYSplot / Lite: if the vertical component is significant and points “up” (|Δz|/L > 0.15 and Δz > 0), the shaft is flipped so the tip follows the inclination / downslope sense. Angles use the same rule.
+
+**Fixed** (Off by default) draws every shaft at the same **Length** in centimetres, **centred on P1**; Off keeps the real P2–P3 length (possibly reversed by the improved sense). Use Fixed to compare orientations, not object sizes.
+
+On import the plugin writes **`G_orientacio`** (azimuth 0–360°, North = 0°, clockwise) and **`G_pendent`** (inclination 0–90° from horizontal) when they are missing or empty; finite values already in the file are kept. **Resources → Orientation → Recalculate** overwrites both fields from the current axis (full table; filters ignored).
+
+Vector display options remain disabled until the imported data contains orientation coordinates (P2/P3 after normalisation, or legacy P1/P2).
 
 ### Density
 
@@ -249,7 +264,7 @@ PNG export produces a **formatted figure of the data frame**, rather than a scre
 
 Available export settings include:
 
-- Background colour.
+- Plot background colour (fills only inside the axes; the paper sheet is always white).
 - Title and subtitle.
 - Resolution: **96, 150, 300 or 600 dpi**.
 - Metric axes.
@@ -261,7 +276,7 @@ The 3D window also supports PNG export of the scatter plot.
 
 ### 3D View
 
-Click **Open 3D view** to explore the same filtered dataset in three dimensions.
+Click **Open 3D view** (General → View) to explore the same filtered dataset in three dimensions.
 
 Navigation:
 

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Lite-style workspace: plan / longitudinal / transversal + filters."""
+
 from contextlib import contextmanager, suppress
 import csv
 import math
@@ -16,7 +17,17 @@ from qgis.core import (
 from qgis.gui import QgsMapCanvas
 from qgis.PyQt.QtCore import QByteArray, QPoint, QRect, QSize, Qt, QTimer
 from qgis.PyQt.QtGui import (
-    QBrush, QColor, QIcon, QImage, QPainter, QPalette, QPen, QFont, QPixmap,
+    QBrush,
+    QColor,
+    QFont,
+    QFontMetrics,
+    QIcon,
+    QImage,
+    QKeySequence,
+    QPainter,
+    QPalette,
+    QPen,
+    QPixmap,
 )
 from qgis.PyQt.QtWidgets import (
     QAbstractButton,
@@ -41,6 +52,7 @@ from qgis.PyQt.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QShortcut,
     QSizePolicy,
     QSlider,
     QSpinBox,
@@ -62,7 +74,7 @@ from . import profile as P
 from . import quadre_grid as QG
 from . import style_file as SF
 from . import view3d
-from .colors_util import css_hex
+from .colors_util import css_hex, pick_measure_stroke
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -71,6 +83,10 @@ from .axes_grid import (
     PAD_L,
     PAD_R,
     PAD_T,
+    PAPER_BG,
+    PAPER_FAINT,
+    PAPER_INK,
+    PAPER_MUTED,
     AxesGridOverlay,
     paint_paper_axes,
     paint_paper_legend,
@@ -82,63 +98,63 @@ from .axes_grid import (
 
 # Active UI theme (dark by default). Widgets that paint by hand read UI_THEME.
 THEMES = {
-    'dark': {
-        'name': 'dark',
-        'bg': '#1c1916',
-        'canvas': '#000000',
-        'panel': '#161411',
-        'ink': '#fff5e6',
-        'muted': 'rgba(255,245,230,0.55)',
-        'btn': '#2a2520',
-        'btn_border': '#3a342e',
-        'btn_hover': '#3a342e',
-        'disabled': '#6b645c',
-        'groove': '#2a2520',
-        'track_off': '#3a342e',
-        'track_off_border': '#8a8178',
-        'handle_rim': '#1c1916',
-        'handle_fill': '#fff5e6',
-        'spin_btn': '#4a443c',
-        'group_border': '#3a342e',
-        'accent': '#d97726',
-        'accent_border': '#f0a15a',
+    "dark": {
+        "name": "dark",
+        "bg": "#1c1916",
+        "canvas": "#000000",
+        "panel": "#161411",
+        "ink": "#fff5e6",
+        "muted": "rgba(255,245,230,0.55)",
+        "btn": "#2a2520",
+        "btn_border": "#3a342e",
+        "btn_hover": "#3a342e",
+        "disabled": "#6b645c",
+        "groove": "#2a2520",
+        "track_off": "#3a342e",
+        "track_off_border": "#8a8178",
+        "handle_rim": "#1c1916",
+        "handle_fill": "#fff5e6",
+        "spin_btn": "#4a443c",
+        "group_border": "#3a342e",
+        "accent": "#d97726",
+        "accent_border": "#f0a15a",
     },
-    'light': {
-        'name': 'light',
-        'bg': '#f3f0ea',
-        'canvas': '#ffffff',
-        'panel': '#efebe3',
-        'ink': '#1a1816',
-        'muted': 'rgba(26,24,22,0.55)',
-        'btn': '#e8e2d8',
-        'btn_border': '#c8c0b4',
-        'btn_hover': '#ddd5c8',
-        'disabled': '#9a9288',
-        'groove': '#ddd5c8',
-        'track_off': '#c8c0b4',
-        'track_off_border': '#9a9288',
-        'handle_rim': '#c8c0b4',
-        'handle_fill': '#fffdf8',
-        'spin_btn': '#5a554e',
-        'group_border': '#c8c0b4',
-        'accent': '#d97726',
-        'accent_border': '#f0a15a',
+    "light": {
+        "name": "light",
+        "bg": "#f3f0ea",
+        "canvas": "#ffffff",
+        "panel": "#efebe3",
+        "ink": "#1a1816",
+        "muted": "rgba(26,24,22,0.55)",
+        "btn": "#e8e2d8",
+        "btn_border": "#c8c0b4",
+        "btn_hover": "#ddd5c8",
+        "disabled": "#9a9288",
+        "groove": "#ddd5c8",
+        "track_off": "#c8c0b4",
+        "track_off_border": "#9a9288",
+        "handle_rim": "#c8c0b4",
+        "handle_fill": "#fffdf8",
+        "spin_btn": "#5a554e",
+        "group_border": "#c8c0b4",
+        "accent": "#d97726",
+        "accent_border": "#f0a15a",
     },
 }
-UI_THEME = dict(THEMES['dark'])
-DARK = UI_THEME['canvas']
-INK = UI_THEME['ink']
+UI_THEME = dict(THEMES["dark"])
+DARK = UI_THEME["canvas"]
+INK = UI_THEME["ink"]
 
 
 # Tip chrome matches the UI theme (same contrast as the dock). Never touch
 # QApplication palette/stylesheet — that fights QGIS and can flip light/dark.
-TOOLTIP_DARK = {'bg': '#1c1916', 'ink': '#fff5e6', 'border': '#3a342e'}
-TOOLTIP_LIGHT = {'bg': '#fff8ee', 'ink': '#1a1816', 'border': '#c8c0b4'}
+TOOLTIP_DARK = {"bg": "#1c1916", "ink": "#fff5e6", "border": "#3a342e"}
+TOOLTIP_LIGHT = {"bg": "#fff8ee", "ink": "#1a1816", "border": "#c8c0b4"}
 
 
 def tooltip_palette():
     """QToolTip colours matching the active UI theme."""
-    if UI_THEME.get('name') == 'light':
+    if UI_THEME.get("name") == "light":
         return dict(TOOLTIP_LIGHT)
     return dict(TOOLTIP_DARK)
 
@@ -147,14 +163,13 @@ def tooltip_css():
     """High-contrast QToolTip chrome (must be included in local widget sheets)."""
     tip = tooltip_palette()
     return (
-        'QToolTip { background-color:%(bg)s; color:%(ink)s; border:1px solid %(border)s;'
-        '  padding:6px 9px; font-size:11px; }'
-        % tip
+        "QToolTip { background-color:%(bg)s; color:%(ink)s; border:1px solid %(border)s;"
+        "  padding:6px 9px; font-size:11px; }" % tip
     )
 
 
 TOOLTIP_CSS = tooltip_css()
-L.set_tooltip_chrome(tooltip_palette()['bg'], tooltip_palette()['ink'])
+L.set_tooltip_chrome(tooltip_palette()["bg"], tooltip_palette()["ink"])
 
 
 def _retint_html_tooltips(root, ink=None, bg=None):
@@ -162,31 +177,37 @@ def _retint_html_tooltips(root, ink=None, bg=None):
     if root is None:
         return
     tip = tooltip_palette()
-    ink = ink or tip['ink']
-    bg = bg or tip['bg']
-    known_ink = ('#fff5e6', '#FFF5E6', '#1a1816', '#1A1816')
+    ink = ink or tip["ink"]
+    bg = bg or tip["bg"]
+    known_ink = ("#fff5e6", "#FFF5E6", "#1a1816", "#1A1816")
     known_bg = (
-        '#fff8ee', '#FFF8EE', '#1c1916', '#1C1916',
-        '#fff5e6', '#FFF5E6', '#f3f0ea', '#F3F0EA',
+        "#fff8ee",
+        "#FFF8EE",
+        "#1c1916",
+        "#1C1916",
+        "#fff5e6",
+        "#FFF5E6",
+        "#f3f0ea",
+        "#F3F0EA",
     )
     for widget in root.findChildren(QWidget):
         tip_html = widget.toolTip()
-        if not tip_html or ('color:' not in tip_html and 'background' not in tip_html):
+        if not tip_html or ("color:" not in tip_html and "background" not in tip_html):
             continue
         updated = tip_html
         for old in known_ink:
             if old.lower() == ink.lower():
                 continue
-            updated = updated.replace('color:%s' % old, 'color:%s' % ink)
-            updated = updated.replace('color: %s' % old, 'color:%s' % ink)
+            updated = updated.replace("color:%s" % old, "color:%s" % ink)
+            updated = updated.replace("color: %s" % old, "color:%s" % ink)
         for old in known_bg:
             if old.lower() == bg.lower():
                 continue
             updated = updated.replace(
-                'background-color:%s' % old, 'background-color:%s' % bg
+                "background-color:%s" % old, "background-color:%s" % bg
             )
             updated = updated.replace(
-                'background-color: %s' % old, 'background-color:%s' % bg
+                "background-color: %s" % old, "background-color:%s" % bg
             )
         if updated != tip_html:
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
@@ -196,26 +217,25 @@ def _retint_html_tooltips(root, ink=None, bg=None):
 def _set_ui_theme(name):
     """Swap the active palette used by stylesheets and hand-painted chrome."""
     global UI_THEME, DARK, INK, TOOLTIP_CSS
-    UI_THEME = dict(THEMES['light' if name == 'light' else 'dark'])
-    DARK = UI_THEME['canvas']
-    INK = UI_THEME['ink']
+    UI_THEME = dict(THEMES["light" if name == "light" else "dark"])
+    DARK = UI_THEME["canvas"]
+    INK = UI_THEME["ink"]
     TOOLTIP_CSS = tooltip_css()
     tip = tooltip_palette()
-    L.set_tooltip_chrome(tip['bg'], tip['ink'])
+    L.set_tooltip_chrome(tip["bg"], tip["ink"])
 
 
 def compact_btn_css():
     t = UI_THEME
     return (
-        'QPushButton { background:%(btn)s; color:%(ink)s; border:1px solid %(btn_border)s;'
-        '  border-radius:6px; font-size:10px; padding:2px 4px; }'
-        'QPushButton:hover { background:%(btn_hover)s; }'
-        'QPushButton:disabled { color:%(disabled)s; background:%(btn)s;'
-        '  border-color:%(btn_border)s; }'
-        'QPushButton:checked { background:%(accent)s; border-color:%(accent_border)s; }'
-        'QPushButton:checked:disabled { background:%(btn)s; border-color:%(btn_border)s;'
-        '  color:%(disabled)s; }'
-        + TOOLTIP_CSS
+        "QPushButton { background:%(btn)s; color:%(ink)s; border:1px solid %(btn_border)s;"
+        "  border-radius:6px; font-size:10px; padding:2px 4px; }"
+        "QPushButton:hover { background:%(btn_hover)s; }"
+        "QPushButton:disabled { color:%(disabled)s; background:%(btn)s;"
+        "  border-color:%(btn_border)s; }"
+        "QPushButton:checked { background:%(accent)s; border-color:%(accent_border)s; }"
+        "QPushButton:checked:disabled { background:%(btn)s; border-color:%(btn_border)s;"
+        "  color:%(disabled)s; }" + TOOLTIP_CSS
     ) % t
 
 
@@ -301,9 +321,11 @@ class FlowLayout(QLayout):
         for item in self._items:
             hint = item.sizeHint()
             next_x = x + hint.width() + space_x
-            if (item is not self._items[0]
-                    and next_x - space_x > effective.right()
-                    and line_h > 0):
+            if (
+                item is not self._items[0]
+                and next_x - space_x > effective.right()
+                and line_h > 0
+            ):
                 x = effective.x()
                 y = y + line_h + space_y
                 next_x = x + hint.width() + space_x
@@ -338,10 +360,37 @@ class FlowHost(QWidget):
         return super().minimumSizeHint()
 
 
+class MosaicScroll(QScrollArea):
+    """Resources cell host: scroll content without inflating 2×2 mosaic minima.
+
+    A plain QScrollArea forwards the inner widget sizeHint, which lets Filter +
+    Orientation/Coordinates steal column/row space from Plan/Long/Trans.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
+        self.setMinimumSize(0, 0)
+
+    def sizeHint(self):
+        return QSize(240, 200)
+
+    def minimumSizeHint(self):
+        return QSize(0, 0)
+
+
 @contextmanager
-def _qgis_busy(text='ARSYSplotQGIS working'):
+def _qgis_busy(text="ARSYSplotQGIS working"):
     """QGIS wait cursor and the status-bar task spinner. No extra libraries."""
     from qgis.utils import OverrideCursor
+
     task = None
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         task = QgsScopedProxyProgressTask(text)
@@ -367,8 +416,8 @@ def _tune_auto_btn(btn):
 
 def _spin_line_css():
     return (
-        'QLineEdit { font-size:11px; padding:0px; border:none;'
-        '  background:%(btn)s; color:%(ink)s; selection-background-color:%(accent)s; }'
+        "QLineEdit { font-size:11px; padding:0px; border:none;"
+        "  background:%(btn)s; color:%(ink)s; selection-background-color:%(accent)s; }"
     ) % UI_THEME
 
 
@@ -378,43 +427,46 @@ _CLIP_SPIN_BTN = 14  # px; must match #arsysClipSpin::up/down-button width
 def _clip_spin_css():
     """Min/Max only: digits flush to arrows — no spare padding strip."""
     t = UI_THEME
-    spin_up = os.path.join(PLUGIN_DIR, 'spin_up.svg').replace('\\', '/')
-    spin_down = os.path.join(PLUGIN_DIR, 'spin_down.svg').replace('\\', '/')
+    spin_up = os.path.join(PLUGIN_DIR, "spin_up.svg").replace("\\", "/")
+    spin_down = os.path.join(PLUGIN_DIR, "spin_down.svg").replace("\\", "/")
     return (
-        'QDoubleSpinBox#arsysClipSpin {'
-        '  background:%(btn)s; color:%(ink)s;'
-        '  border:1px solid %(btn_border)s;'
-        '  padding:1px %(btn_w)dpx 1px 3px;'
-        '  min-height:24px; }'
-        'QDoubleSpinBox#arsysClipSpin QLineEdit {'
-        '  border:none; padding:0px; margin:0px;'
-        '  background:%(btn)s; color:%(ink)s;'
-        '  selection-background-color:%(accent)s; }'
-        'QDoubleSpinBox#arsysClipSpin::up-button,'
-        'QDoubleSpinBox#arsysClipSpin::down-button {'
-        '  subcontrol-origin: border; width:%(btn_w)dpx;'
-        '  background:%(spin_btn)s; border:none; }'
-        'QDoubleSpinBox#arsysClipSpin::up-button {'
-        '  subcontrol-position: top right; }'
-        'QDoubleSpinBox#arsysClipSpin::down-button {'
-        '  subcontrol-position: bottom right; }'
-        'QDoubleSpinBox#arsysClipSpin::up-button:hover,'
-        'QDoubleSpinBox#arsysClipSpin::down-button:hover {'
-        '  background:%(accent)s; }'
-        'QDoubleSpinBox#arsysClipSpin::up-arrow {'
+        "QDoubleSpinBox#arsysClipSpin {"
+        "  background:%(btn)s; color:%(ink)s;"
+        "  border:1px solid %(btn_border)s;"
+        "  padding:1px %(btn_w)dpx 1px 3px;"
+        "  min-height:24px; }"
+        "QDoubleSpinBox#arsysClipSpin QLineEdit {"
+        "  border:none; padding:0px; margin:0px;"
+        "  background:%(btn)s; color:%(ink)s;"
+        "  selection-background-color:%(accent)s; }"
+        "QDoubleSpinBox#arsysClipSpin::up-button,"
+        "QDoubleSpinBox#arsysClipSpin::down-button {"
+        "  subcontrol-origin: border; width:%(btn_w)dpx;"
+        "  background:%(spin_btn)s; border:none; }"
+        "QDoubleSpinBox#arsysClipSpin::up-button {"
+        "  subcontrol-position: top right; }"
+        "QDoubleSpinBox#arsysClipSpin::down-button {"
+        "  subcontrol-position: bottom right; }"
+        "QDoubleSpinBox#arsysClipSpin::up-button:hover,"
+        "QDoubleSpinBox#arsysClipSpin::down-button:hover {"
+        "  background:%(accent)s; }"
+        "QDoubleSpinBox#arsysClipSpin::up-arrow {"
         '  image: url("%(spin_up)s"); width:8px; height:5px; }'
-        'QDoubleSpinBox#arsysClipSpin::down-arrow {'
+        "QDoubleSpinBox#arsysClipSpin::down-arrow {"
         '  image: url("%(spin_down)s"); width:8px; height:5px; }'
     ) % dict(
-        t, btn_w=_CLIP_SPIN_BTN, spin_up=spin_up, spin_down=spin_down,
+        t,
+        btn_w=_CLIP_SPIN_BTN,
+        spin_up=spin_up,
+        spin_down=spin_down,
     )
 
 
 def _fit_clip_spin_width(spn):
     """Width = text for 2 decimals + arrow column only (no dead field)."""
     fm = spn.fontMetrics()
-    sample = '8888.88'
-    if hasattr(fm, 'horizontalAdvance'):
+    sample = "8888.88"
+    if hasattr(fm, "horizontalAdvance"):
         text_w = int(fm.horizontalAdvance(sample))
     else:
         text_w = int(fm.width(sample))
@@ -424,7 +476,7 @@ def _fit_clip_spin_width(spn):
 
 def _tune_clip_spin(spn):
     """Hug content: only digits + +/- . Free row space stays outside the control."""
-    spn.setObjectName('arsysClipSpin')
+    spn.setObjectName("arsysClipSpin")
     spn.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.UpDownArrows)
     spn.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
     spn.setDecimals(2)
@@ -442,10 +494,10 @@ def _tune_clip_spin(spn):
 def _theme_palette():
     """Force editable controls off the QGIS/system Base (often white)."""
     t = UI_THEME
-    bg = QColor(t['bg'])
-    base = QColor(t['btn'])
-    ink = QColor(t['ink'])
-    accent = QColor(t['accent'])
+    bg = QColor(t["bg"])
+    base = QColor(t["btn"])
+    ink = QColor(t["ink"])
+    accent = QColor(t["accent"])
     pal = QPalette()
     pal.setColor(QPalette.ColorRole.Window, bg)
     pal.setColor(QPalette.ColorRole.WindowText, ink)
@@ -455,12 +507,12 @@ def _theme_palette():
     pal.setColor(QPalette.ColorRole.Button, base)
     pal.setColor(QPalette.ColorRole.ButtonText, ink)
     pal.setColor(QPalette.ColorRole.Highlight, accent)
-    pal.setColor(QPalette.ColorRole.HighlightedText, QColor('#fff8ee'))
-    pal.setColor(QPalette.ColorRole.PlaceholderText, QColor(t['disabled']))
+    pal.setColor(QPalette.ColorRole.HighlightedText, QColor("#fff8ee"))
+    pal.setColor(QPalette.ColorRole.PlaceholderText, QColor(t["disabled"]))
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
         tip = tooltip_palette()
-        pal.setColor(QPalette.ColorRole.ToolTipBase, QColor(tip['bg']))
-        pal.setColor(QPalette.ColorRole.ToolTipText, QColor(tip['ink']))
+        pal.setColor(QPalette.ColorRole.ToolTipBase, QColor(tip["bg"]))
+        pal.setColor(QPalette.ColorRole.ToolTipText, QColor(tip["ink"]))
     return pal
 
 
@@ -474,12 +526,12 @@ class ToggleSwitch(QAbstractButton):
     TRACK_W = 42
     TRACK_H = 22
 
-    def __init__(self, text='', parent=None):
+    def __init__(self, text="", parent=None):
         super().__init__(parent)
         self.setCheckable(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setText(text)
-        if str(text or '').strip():
+        if str(text or "").strip():
             self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         else:
             self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
@@ -487,7 +539,7 @@ class ToggleSwitch(QAbstractButton):
 
     def sizeHint(self):
         fm = self.fontMetrics()
-        label = str(self.text() or '')
+        label = str(self.text() or "")
         try:
             tw = fm.horizontalAdvance(label) if label else 0
         except AttributeError:
@@ -500,12 +552,12 @@ class ToggleSwitch(QAbstractButton):
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         r = self.contentsRect()
         tw, th = self.TRACK_W, self.TRACK_H
-        label = str(self.text() or '')
+        label = str(self.text() or "")
         if label:
             track = QRect(r.right() - tw, r.y() + (r.height() - th) // 2, tw, th)
             text_w = max(0, track.x() - r.x() - 10)
             t = UI_THEME
-            p.setPen(QColor(t['ink'] if self.isEnabled() else t['disabled']))
+            p.setPen(QColor(t["ink"] if self.isEnabled() else t["disabled"]))
             p.drawText(
                 QRect(r.x(), r.y(), text_w, r.height()),
                 Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
@@ -516,52 +568,60 @@ class ToggleSwitch(QAbstractButton):
             t = UI_THEME
         on = self.isChecked()
         if on:
-            p.setBrush(QBrush(QColor(t['accent'])))
-            p.setPen(QPen(QColor(t['accent_border']), 1))
+            p.setBrush(QBrush(QColor(t["accent"])))
+            p.setPen(QPen(QColor(t["accent_border"]), 1))
         else:
-            p.setBrush(QBrush(QColor(t['track_off'])))
-            p.setPen(QPen(QColor(t['track_off_border']), 1))
+            p.setBrush(QBrush(QColor(t["track_off"])))
+            p.setPen(QPen(QColor(t["track_off_border"]), 1))
         p.drawRoundedRect(track, th / 2.0, th / 2.0)
         kd = th - 6
         kx = track.right() - 3 - kd if on else track.x() + 3
         ky = track.y() + 3
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QBrush(QColor(t['handle_fill'])))
+        p.setBrush(QBrush(QColor(t["handle_fill"])))
         p.drawEllipse(kx, ky, kd, kd)
 
 
 # Preferred attribute names for the compact Point info card (Lite-compatible).
 POINT_INFO_SMALL_FIELDS = (
-    'id', 'ID2', 'quadre', 'numero', 'material',
-    'lliure1', 'lliure2', 'lliure3',
-    'p1x', 'p1y', 'p1z',
+    "id",
+    "ID2",
+    "quadre",
+    "numero",
+    "material",
+    "lliure1",
+    "lliure2",
+    "lliure3",
+    "p1x",
+    "p1y",
+    "p1z",
 )
 
 # One-line caption in the Find hit list (Lite FIND_LIST_FIELDS).
-FIND_LIST_FIELDS = ('id', 'quadre', 'numero', 'material')
+FIND_LIST_FIELDS = ("id", "quadre", "numero", "material")
 
 
 def _point_info_cell_text(value):
     if value is None:
-        return '—'
+        return "—"
     if isinstance(value, float):
         if math.isnan(value):
-            return '—'
+            return "—"
         if abs(value) >= 1000 or (abs(value) > 0 and abs(value) < 0.001):
-            return '%.4g' % value
-        text = ('%.4f' % value).rstrip('0').rstrip('.')
-        return text or '0'
+            return "%.4g" % value
+        text = ("%.4f" % value).rstrip("0").rstrip(".")
+        return text or "0"
     text = str(value).strip()
-    return text if text else '—'
+    return text if text else "—"
 
 
 def _point_info_escape(text):
     return (
         str(text)
-        .replace('&', '&amp;')
-        .replace('<', '&lt;')
-        .replace('>', '&gt;')
-        .replace('"', '&quot;')
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
     )
 
 
@@ -574,7 +634,7 @@ class PointInfoCard(QFrame):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setObjectName('arsysPointInfo')
+        self.setObjectName("arsysPointInfo")
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -584,12 +644,10 @@ class PointInfoCard(QFrame):
         lay.setContentsMargins(10, 8, 10, 8)
         lay.setSpacing(0)
         self._lab = QLabel(self)
-        self._lab.setObjectName('arsysPiBody')
+        self._lab.setObjectName("arsysPiBody")
         self._lab.setTextFormat(Qt.TextFormat.RichText)
         self._lab.setWordWrap(False)
-        self._lab.setAlignment(
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
-        )
+        self._lab.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         self._lab.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         lay.addWidget(self._lab)
         self._pairs = ()
@@ -598,11 +656,9 @@ class PointInfoCard(QFrame):
 
     def _tip_colors(self):
         tip = tooltip_palette()
-        ink = tip['ink']
-        muted = (
-            '#8a8178' if ink.lower().startswith('#fff') else '#6b645c'
-        )
-        return tip['bg'], ink, tip['border'], muted
+        ink = tip["ink"]
+        muted = "#8a8178" if ink.lower().startswith("#fff") else "#6b645c"
+        return tip["bg"], ink, tip["border"], muted
 
     def apply_theme(self):
         bg, ink, border, _muted = self._tip_colors()
@@ -625,18 +681,16 @@ class PointInfoCard(QFrame):
         self._lab.setPalette(pal)
         # Local sheet beats the dock-wide `QWidget { color/background }` rule.
         self.setStyleSheet(
-            'QFrame#arsysPointInfo {'
-            '  background-color:%(bg)s; color:%(ink)s;'
-            '  border:1px solid %(border)s; border-radius:8px;'
-            '}'
-            % {'bg': bg, 'ink': ink, 'border': border}
+            "QFrame#arsysPointInfo {"
+            "  background-color:%(bg)s; color:%(ink)s;"
+            "  border:1px solid %(border)s; border-radius:8px;"
+            "}" % {"bg": bg, "ink": ink, "border": border}
         )
         self._lab.setStyleSheet(
-            'QLabel#arsysPiBody {'
-            '  background-color:transparent; color:%(ink)s; border:none;'
-            '  font-size:12px; padding:0;'
-            '}'
-            % {'ink': ink}
+            "QLabel#arsysPiBody {"
+            "  background-color:transparent; color:%(ink)s; border:none;"
+            "  font-size:12px; padding:0;"
+            "}" % {"ink": ink}
         )
         if self._pairs:
             self.set_rows(self._pairs, two_columns=self._two_columns)
@@ -652,19 +706,19 @@ class PointInfoCard(QFrame):
         """Label (right) + value (left), fixed key width so columns line up."""
         return (
             '<td style="color:%(muted)s;padding:4px %(gap)dpx 4px 0;'
-            'text-align:right;vertical-align:top;white-space:nowrap;'
+            "text-align:right;vertical-align:top;white-space:nowrap;"
             'width:%(key_w)dpx;min-width:%(key_w)dpx;">%(key)s</td>'
             '<td style="color:%(ink)s;padding:4px %(after)dpx 4px 0;'
             'vertical-align:top;font-family:monospace;white-space:nowrap;">'
-            '%(val)s</td>'
+            "%(val)s</td>"
             % {
-                'muted': muted,
-                'ink': ink,
-                'gap': gap,
-                'after': after,
-                'key_w': key_w,
-                'key': _point_info_escape(key),
-                'val': _point_info_escape(_point_info_cell_text(value)),
+                "muted": muted,
+                "ink": ink,
+                "gap": gap,
+                "after": after,
+                "key_w": key_w,
+                "key": _point_info_escape(key),
+                "val": _point_info_escape(_point_info_cell_text(value)),
             }
         )
 
@@ -683,33 +737,30 @@ class PointInfoCard(QFrame):
         if self._two_columns:
             items = list(self._pairs)
             if len(items) % 2:
-                items.append(('', ''))
+                items.append(("", ""))
             for i in range(0, len(items), 2):
                 k1, v1 = items[i]
                 k2, v2 = items[i + 1]
-                left = self._kv_cells(
-                    k1, v1, muted, ink, key_w=key_w, gap=8, after=18
-                )
-                if k2 == '' and v2 == '':
-                    right = '<td></td><td></td>'
+                left = self._kv_cells(k1, v1, muted, ink, key_w=key_w, gap=8, after=18)
+                if k2 == "" and v2 == "":
+                    right = "<td></td><td></td>"
                 else:
                     right = self._kv_cells(
                         k2, v2, muted, ink, key_w=key_w, gap=8, after=0
                     )
-                rows.append('<tr>%s%s</tr>' % (left, right))
+                rows.append("<tr>%s%s</tr>" % (left, right))
             max_w = 560
         else:
             for key, value in self._pairs:
                 rows.append(
-                    '<tr>%s</tr>'
+                    "<tr>%s</tr>"
                     % self._kv_cells(key, value, muted, ink, key_w=key_w, gap=8)
                 )
             max_w = 320
         self._lab.setText(
             '<table cellspacing="0" cellpadding="0" style="background:transparent;'
             'color:%s;border-collapse:collapse;font-size:12px;line-height:1.35;">'
-            '%s</table>'
-            % (ink, ''.join(rows))
+            "%s</table>" % (ink, "".join(rows))
         )
         self.setMaximumWidth(max_w)
         self.setMaximumHeight(16777215)
@@ -750,9 +801,11 @@ class DensityScaleBar(QWidget):
         self.setMinimumHeight(56)
         self.setMaximumHeight(64)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.setToolTip(L.html_tooltip(
-            '**Density** colour scale. Each colour step is labelled with its value.',
-        ))
+        self.setToolTip(
+            L.html_tooltip(
+                "**Density** colour scale. Each colour step is labelled with its value.",
+            )
+        )
         self.setStyleSheet(TOOLTIP_CSS)
         self.hide()
 
@@ -807,7 +860,7 @@ class DensityScaleBar(QWidget):
         if len(self._colors) < 2 or len(self._bounds) != len(self._colors) + 1:
             return
         t = UI_THEME
-        ink = QColor(t['ink'])
+        ink = QColor(t["ink"])
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
@@ -854,24 +907,23 @@ class DensityScaleBar(QWidget):
             p.drawText(rect, align, lab)
 
 
-
-
 def _themed_icon(filename, ink, size=14):
     """SVG icon with cream strokes remapped to the theme ink colour."""
     path = os.path.join(PLUGIN_DIR, filename)
     try:
-        with open(path, 'r', encoding='utf-8') as fh:
+        with open(path, "r", encoding="utf-8") as fh:
             raw = fh.read()
     except OSError:
         return QIcon(path)
-    ink = str(ink or '#fff5e6')
-    raw = raw.replace('#fff5e6', ink).replace('#FFF5E6', ink)
+    ink = str(ink or "#fff5e6")
+    raw = raw.replace("#fff5e6", ink).replace("#FFF5E6", ink)
     pm = QPixmap(size, size)
     pm.fill(Qt.GlobalColor.transparent)
     rendered = False
     with suppress(Exception):
         from qgis.PyQt.QtSvg import QSvgRenderer
-        renderer = QSvgRenderer(QByteArray(raw.encode('utf-8')))
+
+        renderer = QSvgRenderer(QByteArray(raw.encode("utf-8")))
         if renderer.isValid():
             p = QPainter(pm)
             renderer.render(p)
@@ -887,18 +939,18 @@ def _pane_icon_btn_css(light):
     # Local button sheets must include QToolTip or tips become unreadable.
     if light:
         return (
-            'QPushButton { background:#ffffff; border:1px solid #000000;'
-            '  border-radius:4px; padding:0; }'
-            'QPushButton:hover { background:#f0f0f0; }'
-            'QPushButton:disabled { background:#f5f5f5; border-color:#666666; }'
+            "QPushButton { background:#ffffff; border:1px solid #000000;"
+            "  border-radius:4px; padding:0; }"
+            "QPushButton:hover { background:#f0f0f0; }"
+            "QPushButton:disabled { background:#f5f5f5; border-color:#666666; }"
             + TOOLTIP_CSS
         )
     t = UI_THEME
     return (
-        'QPushButton { background:%(btn)s; border:1px solid %(btn_border)s;'
-        '  border-radius:4px; padding:0; }'
-        'QPushButton:hover { background:%(btn_hover)s; }'
-        'QPushButton:disabled { background:%(btn)s; border-color:%(btn_border)s; }'
+        "QPushButton { background:%(btn)s; border:1px solid %(btn_border)s;"
+        "  border-radius:4px; padding:0; }"
+        "QPushButton:hover { background:%(btn_hover)s; }"
+        "QPushButton:disabled { background:%(btn)s; border-color:%(btn_border)s; }"
         + TOOLTIP_CSS
     ) % t
 
@@ -906,12 +958,12 @@ def _pane_icon_btn_css(light):
 def _icon_button(filename, tooltip):
     btn = QPushButton()
     btn._arsys_icon = filename
-    btn.setIcon(_themed_icon(filename, UI_THEME.get('ink', '#fff5e6'), 14))
+    btn.setIcon(_themed_icon(filename, UI_THEME.get("ink", "#fff5e6"), 14))
     btn.setIconSize(QSize(14, 14))
     btn.setFixedSize(24, 22)
     btn.setCursor(Qt.CursorShape.PointingHandCursor)
     btn.setToolTip(L.html_tooltip(tooltip))
-    btn.setStyleSheet(_pane_icon_btn_css(UI_THEME.get('name') == 'light'))
+    btn.setStyleSheet(_pane_icon_btn_css(UI_THEME.get("name") == "light"))
     return btn
 
 
@@ -926,7 +978,7 @@ def _source_icon_button(filename, tooltip, height):
     btn._arsys_icon = filename
     # Larger than pane chrome icons (14): Load Data is the primary entry.
     icon = max(18, min(22, int(height) - 4))
-    ink = UI_THEME.get('ink', '#fff5e6')
+    ink = UI_THEME.get("ink", "#fff5e6")
     btn.setIcon(_themed_icon(filename, ink, icon))
     btn.setIconSize(QSize(icon, icon))
     btn.setFixedHeight(int(height))
@@ -938,22 +990,22 @@ def _source_icon_button(filename, tooltip, height):
     return btn
 
 
-def _suggest_export(title, ext='png'):
-    base = title.split('·')[0].strip().replace(' ', '_')
+def _suggest_export(title, ext="png"):
+    base = title.split("·")[0].strip().replace(" ", "_")
     keep = []
     for ch in base:
-        keep.append(ch if ch.isalnum() or ch in '-_' else '_')
-    name = ''.join(keep).strip('_') or 'view'
-    ext = str(ext or 'png').lstrip('.').lower() or 'png'
-    return '%s.%s' % (name, ext)
+        keep.append(ch if ch.isalnum() or ch in "-_" else "_")
+    name = "".join(keep).strip("_") or "view"
+    ext = str(ext or "png").lstrip(".").lower() or "png"
+    return "%s.%s" % (name, ext)
 
 
 def _suggest_png(title):
-    return _suggest_export(title, 'png')
+    return _suggest_export(title, "png")
 
 
 def _mouse_x(event):
-    if hasattr(event, 'position'):
+    if hasattr(event, "position"):
         return event.position().x()
     return event.pos().x()
 
@@ -999,14 +1051,14 @@ class DualRangeBar(QWidget):
         gy = cy - 3
         t = UI_THEME
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(t['groove']))
+        p.setBrush(QColor(t["groove"]))
         p.drawRoundedRect(QRect(x0, gy, max(x1 - x0, 1), 6), 3, 3)
         xa = int(round(self._t_to_x(self._a)))
         xb = int(round(self._t_to_x(self._b)))
-        p.setBrush(QColor(t['accent']))
+        p.setBrush(QColor(t["accent"]))
         p.drawRoundedRect(QRect(xa, gy, max(xb - xa, 2), 6), 3, 3)
-        p.setPen(QPen(QColor(t['handle_rim']), 1))
-        p.setBrush(QColor(t['handle_fill']))
+        p.setPen(QPen(QColor(t["handle_rim"]), 1))
+        p.setBrush(QColor(t["handle_fill"]))
         p.drawEllipse(QPoint(xa, cy), 6, 6)
         p.drawEllipse(QPoint(xb, cy), 6, 6)
 
@@ -1014,7 +1066,7 @@ class DualRangeBar(QWidget):
         x = _mouse_x(event)
         xa = self._t_to_x(self._a)
         xb = self._t_to_x(self._b)
-        self._drag = 'a' if abs(x - xa) <= abs(x - xb) else 'b'
+        self._drag = "a" if abs(x - xa) <= abs(x - xb) else "b"
         self._move(x)
 
     def mouseMoveEvent(self, event):
@@ -1026,9 +1078,9 @@ class DualRangeBar(QWidget):
 
     def _move(self, x):
         t = self._x_to_t(x)
-        if self._drag == 'a':
+        if self._drag == "a":
             self._a = min(t, self._b)
-        elif self._drag == 'b':
+        elif self._drag == "b":
             self._b = max(t, self._a)
         self.update()
         self._cb()
@@ -1044,8 +1096,8 @@ class RangeSliders(QWidget):
         self._block = False
         self._axis_lab = QLabel(axis.upper())
         self._axis_lab.setFixedWidth(16)
-        self.v0 = QLabel('—')
-        self.v1 = QLabel('—')
+        self.v0 = QLabel("—")
+        self.v1 = QLabel("—")
         self.v0.setMinimumWidth(64)
         self.v1.setMinimumWidth(64)
         self.bar = DualRangeBar(self._changed)
@@ -1057,17 +1109,19 @@ class RangeSliders(QWidget):
         row.addWidget(self.bar, 1)
         row.addWidget(self.v1)
         self.apply_theme()
-        self.setToolTip(L.html_tooltip(
-            'Keep objects on **%s** in this range.' % axis.upper(),
-            'Unit: **metres (m)**, layer coordinates.',
-        ))
+        self.setToolTip(
+            L.html_tooltip(
+                "Keep objects on **%s** in this range." % axis.upper(),
+                "Unit: **metres (m)**, layer coordinates.",
+            )
+        )
 
     def apply_theme(self):
-        ink = UI_THEME['ink']
+        ink = UI_THEME["ink"]
         self.setStyleSheet(TOOLTIP_CSS)
-        self._axis_lab.setStyleSheet('color:%s;font-weight:700;' % ink)
-        self.v0.setStyleSheet('color:%s;' % ink)
-        self.v1.setStyleSheet('color:%s;' % ink)
+        self._axis_lab.setStyleSheet("color:%s;font-weight:700;" % ink)
+        self.v0.setStyleSheet("color:%s;" % ink)
+        self.v1.setStyleSheet("color:%s;" % ink)
         self.bar.update()
 
     def set_bounds(self, lo, hi):
@@ -1119,8 +1173,8 @@ class RangeSliders(QWidget):
 
     def _sync_labels(self):
         a, b = self.values()
-        self.v0.setText('%.3f m' % a)
-        self.v1.setText('%.3f m' % b)
+        self.v0.setText("%.3f m" % a)
+        self.v1.setText("%.3f m" % b)
 
 
 class PlotCanvas(QgsMapCanvas):
@@ -1136,11 +1190,11 @@ class PlotCanvas(QgsMapCanvas):
         self._resize_timer.timeout.connect(self._refit_if_needed)
         self.extentsChanged.connect(self._on_extents)
         self._pan_last = None
-        if hasattr(self, 'setLabelsVisible'):
+        if hasattr(self, "setLabelsVisible"):
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 self.setLabelsVisible(True)
-        nothing = getattr(QgsMapCanvas, 'WheelNothing', None)
-        if nothing is not None and hasattr(self, 'setWheelAction'):
+        nothing = getattr(QgsMapCanvas, "WheelNothing", None)
+        if nothing is not None and hasattr(self, "setWheelAction"):
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 self.setWheelAction(nothing)
 
@@ -1148,13 +1202,16 @@ class PlotCanvas(QgsMapCanvas):
         if ext is None or ext.isEmpty():
             return
         # Expand planar sides to whole metres so every excavation square is 1 m.
-        overlay = getattr(self, '_overlay', None)
+        overlay = getattr(self, "_overlay", None)
         if overlay is not None:
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 x0, x1, y0, y1 = snap_world_rect(
-                    ext.xMinimum(), ext.xMaximum(),
-                    ext.yMinimum(), ext.yMaximum(),
-                    overlay.h_axis, overlay.v_axis,
+                    ext.xMinimum(),
+                    ext.xMaximum(),
+                    ext.yMinimum(),
+                    ext.yMaximum(),
+                    overlay.h_axis,
+                    overlay.v_axis,
                 )
                 ext = QgsRectangle(x0, y0, x1, y1)
         self._data_ext = QgsRectangle(ext)
@@ -1172,7 +1229,7 @@ class PlotCanvas(QgsMapCanvas):
                 with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                     self.blockSignals(False)
             self._user_view = False
-        overlay = getattr(self, '_overlay', None)
+        overlay = getattr(self, "_overlay", None)
         if overlay is not None:
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 overlay.update()
@@ -1192,8 +1249,8 @@ class PlotCanvas(QgsMapCanvas):
             self._resize_timer.start(40)
 
     def _axis_frame_px(self):
-        overlay = getattr(self, '_overlay', None)
-        if overlay is not None and hasattr(overlay, 'pads'):
+        overlay = getattr(self, "_overlay", None)
+        if overlay is not None and hasattr(overlay, "pads"):
             pad_l, pad_r, pad_t, pad_b = overlay.pads()
         else:
             pad_l, pad_r, pad_t, pad_b = PAD_L, PAD_R, PAD_T, PAD_B
@@ -1208,7 +1265,7 @@ class PlotCanvas(QgsMapCanvas):
         if not delta:
             return
         steps = max(-3.0, min(3.0, float(delta) / 120.0))
-        factor = 0.88 ** steps
+        factor = 0.88**steps
         ext = QgsRectangle(self.extent())
         if ext.isEmpty():
             return
@@ -1238,15 +1295,17 @@ class PlotCanvas(QgsMapCanvas):
         self._fitting = True
         try:
             center = QgsPointXY(anchor.x(), anchor.y())
-            if hasattr(self, 'zoomByFactor'):
+            if hasattr(self, "zoomByFactor"):
                 self.zoomByFactor(factor, center)
             else:
-                self.setExtent(QgsRectangle(
-                    anchor.x() - icx * new_mupp,
-                    anchor.y() - (h - icy) * new_mupp,
-                    anchor.x() + (w - icx) * new_mupp,
-                    anchor.y() + icy * new_mupp,
-                ))
+                self.setExtent(
+                    QgsRectangle(
+                        anchor.x() - icx * new_mupp,
+                        anchor.y() - (h - icy) * new_mupp,
+                        anchor.x() + (w - icx) * new_mupp,
+                        anchor.y() + icy * new_mupp,
+                    )
+                )
             xform2 = self.getCoordinateTransform()
             if xform2 is not None:
                 now = xform2.toMapCoordinates(int(round(icx)), int(round(icy)))
@@ -1254,18 +1313,22 @@ class PlotCanvas(QgsMapCanvas):
                 dy = now.y() - anchor.y()
                 if abs(dx) > 1e-9 or abs(dy) > 1e-9:
                     cur = QgsRectangle(self.extent())
-                    self.setExtent(QgsRectangle(
-                        cur.xMinimum() - dx,
-                        cur.yMinimum() - dy,
-                        cur.xMaximum() - dx,
-                        cur.yMaximum() - dy,
-                    ))
+                    self.setExtent(
+                        QgsRectangle(
+                            cur.xMinimum() - dx,
+                            cur.yMinimum() - dy,
+                            cur.xMaximum() - dx,
+                            cur.yMaximum() - dy,
+                        )
+                    )
             self.refresh()
         finally:
             self._fitting = False
 
     def pan_start(self, x, y):
         self._pan_last = (float(x), float(y))
+        self._pan_origin = (float(x), float(y))
+        self._pan_dragged = False
         self._user_view = True
 
     def pan_move(self, x, y):
@@ -1274,10 +1337,20 @@ class PlotCanvas(QgsMapCanvas):
         dx = float(x) - self._pan_last[0]
         dy = float(y) - self._pan_last[1]
         self._pan_last = (float(x), float(y))
+        origin = getattr(self, "_pan_origin", None)
+        if origin is not None:
+            ox = float(x) - origin[0]
+            oy = float(y) - origin[1]
+            if (ox * ox + oy * oy) >= 16.0:  # ≥4 px → real pan, not a click
+                self._pan_dragged = True
         self._pan_by(dx, dy)
 
     def pan_end(self):
+        dragged = bool(getattr(self, "_pan_dragged", False))
         self._pan_last = None
+        self._pan_origin = None
+        self._pan_dragged = False
+        return dragged
 
     def _pan_by(self, dx, dy):
         if dx == 0 and dy == 0:
@@ -1293,12 +1366,14 @@ class PlotCanvas(QgsMapCanvas):
             return
         self._fitting = True
         try:
-            self.setExtent(QgsRectangle(
-                ext.xMinimum() - dx * mupp,
-                ext.yMinimum() + dy * mupp,
-                ext.xMaximum() - dx * mupp,
-                ext.yMaximum() + dy * mupp,
-            ))
+            self.setExtent(
+                QgsRectangle(
+                    ext.xMinimum() - dx * mupp,
+                    ext.yMinimum() + dy * mupp,
+                    ext.xMaximum() - dx * mupp,
+                    ext.yMaximum() + dy * mupp,
+                )
+            )
             self.refresh()
         finally:
             self._fitting = False
@@ -1308,12 +1383,12 @@ class PlotCanvas(QgsMapCanvas):
         # visible canvas extent may grow for letterboxing.
         content = QgsRectangle(self._data_ext)
         data = QgsRectangle(content)
-        overlay = getattr(self, '_overlay', None)
+        overlay = getattr(self, "_overlay", None)
         if data.width() <= 0 or data.height() <= 0:
             data.grow(0.5)
         w = self.width()
         h = self.height()
-        if overlay is not None and hasattr(overlay, 'pads'):
+        if overlay is not None and hasattr(overlay, "pads"):
             pad_l, pad_r, pad_t, pad_b = overlay.pads()
         else:
             pad_l, pad_r, pad_t, pad_b = PAD_L, PAD_R, PAD_T, PAD_B
@@ -1322,10 +1397,11 @@ class PlotCanvas(QgsMapCanvas):
         # Section panes: pad the *view* on the short axis (thin Z on LONG, or
         # narrow plan span on TRANS ≈ profile Wide). Axis ticks still use the
         # tight _data_ext from the overlay.
-        v_axis = getattr(overlay, 'v_axis', None) if overlay is not None else None
+        v_axis = getattr(overlay, "v_axis", None) if overlay is not None else None
         if (
-            v_axis == 'z'
-            and inner_w >= 20 and inner_h >= 20
+            v_axis == "z"
+            and inner_w >= 20
+            and inner_h >= 20
             and data.width() > 1e-9
             and data.height() > 1e-9
         ):
@@ -1393,18 +1469,25 @@ class PlotPane(QWidget):
         self.h_label = h_label
         self.v_label = v_label
         # Stable pane identity (Profile may temporarily change h_axis on LONG).
-        if h_axis == 'x' and v_axis == 'y':
-            self.pane_role = 'plan'
-        elif v_axis == 'z' and h_axis == 'y':
-            self.pane_role = 'trans'
-        elif v_axis == 'z':
-            self.pane_role = 'long'
+        if h_axis == "x" and v_axis == "y":
+            self.pane_role = "plan"
+        elif v_axis == "z" and h_axis == "y":
+            self.pane_role = "trans"
+        elif v_axis == "z":
+            self.pane_role = "long"
         else:
             self.pane_role = None
         self._on_zoom = on_zoom
+        # Mosaic 2×2: compete equally with Resources (no Preferred width bias).
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
+        self.setMinimumSize(0, 0)
         self.canvas = PlotCanvas(self)
         self.canvas.enableAntiAliasing(True)
-        self.canvas.setMinimumHeight(160)
+        # Soft floor so empty panes stay usable; grid stretch still owns proportions.
+        self.canvas.setMinimumHeight(80)
         self.wrap = QWidget()
         stack = QGridLayout(self.wrap)
         stack.setContentsMargins(0, 0, 0, 0)
@@ -1422,36 +1505,38 @@ class PlotPane(QWidget):
         head.addWidget(self._title_lab, 0)
         head.addStretch(1)
         # Profile pick cue (Plan only; dock shows/hides + blinks).
-        self._cue_lab = QLabel('')
+        self._cue_lab = QLabel("")
         self._cue_lab.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._cue_lab.setVisible(False)
         self._cue_lab.setStyleSheet(
-            'color:#ff2a2a; font-weight:700; font-size:12px;'
-            ' letter-spacing:0.04em; background:transparent; border:none;'
+            "color:#ff2a2a; font-weight:700; font-size:12px;"
+            " letter-spacing:0.04em; background:transparent; border:none;"
         )
         head.addWidget(self._cue_lab, 0)
         head.addStretch(1)
         self.btn_export = _icon_button(
-            'export.svg',
-            'Export **PNG / SVG** at true paper scale (1∶N).',
+            "export.svg",
+            "Export **PNG / SVG** at true paper scale (1∶N).",
         )
         self.btn_export.setEnabled(False)
         self.btn_export.clicked.connect(self.export_image)
         head.addWidget(self.btn_export)
         self.btn_fit = _icon_button(
-            'fit.svg',
-            '**Fit** the view to the data frame (after zoom or pan).',
+            "fit.svg",
+            "**Fit** the view to the data frame (after zoom or pan).",
         )
         self.btn_fit.setEnabled(False)
         self.btn_fit.clicked.connect(self._fit_view)
         head.addWidget(self.btn_fit)
         self.btn_zoom = _icon_button(
-            'zoom.svg',
-            '**Zoom** this view. Wheel, drag, Esc closes.',
+            "zoom.svg",
+            "**Zoom** this view. Wheel, drag, Esc closes.",
         )
         self.btn_zoom.setEnabled(False)
         self.btn_zoom.clicked.connect(self._emit_zoom)
         if on_zoom is None:
+            # Zoom window: title is on the OS window chrome only.
+            self._title_lab.hide()
             self.btn_export.hide()
             self.btn_fit.hide()
             self.btn_zoom.hide()
@@ -1459,29 +1544,30 @@ class PlotPane(QWidget):
         box = QVBoxLayout(self)
         box.setContentsMargins(6, 4, 6, 6)
         box.setSpacing(2)
-        box.addLayout(head)
+        if on_zoom is not None:
+            box.addLayout(head)
         box.addWidget(self.wrap, 1)
         self.apply_theme()
 
     def apply_theme(self):
         t = UI_THEME
-        light = t.get('name') == 'light'
-        ink = t.get('ink', '#1a1816' if light else '#fff5e6')
-        self.canvas.setCanvasColor(QColor(t['canvas']))
+        light = t.get("name") == "light"
+        ink = t.get("ink", "#1a1816" if light else "#fff5e6")
+        self.canvas.setCanvasColor(QColor(t["canvas"]))
         self._title_lab.setStyleSheet(
-            'color:%s;font-size:11px;letter-spacing:0.04em;' % t['muted']
+            "color:%s;font-size:11px;letter-spacing:0.04em;" % t["muted"]
         )
-        self.setStyleSheet('background:%s; %s' % (t['panel'], TOOLTIP_CSS))
+        self.setStyleSheet("background:%s; %s" % (t["panel"], TOOLTIP_CSS))
         css = _pane_icon_btn_css(light)
         for btn in (
-            getattr(self, 'btn_export', None),
-            getattr(self, 'btn_fit', None),
-            getattr(self, 'btn_zoom', None),
+            getattr(self, "btn_export", None),
+            getattr(self, "btn_fit", None),
+            getattr(self, "btn_zoom", None),
         ):
             if btn is None:
                 continue
             btn.setStyleSheet(css)
-            name = getattr(btn, '_arsys_icon', None)
+            name = getattr(btn, "_arsys_icon", None)
             if name:
                 btn.setIcon(_themed_icon(name, ink, 14))
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
@@ -1498,17 +1584,18 @@ class PlotPane(QWidget):
         dock = self._find_dock()
         profile_uv = bool(
             dock is not None
-            and callable(getattr(dock, '_profile_is_ready', None))
+            and callable(getattr(dock, "_profile_is_ready", None))
             and dock._profile_is_ready()
-            and self in (
-                getattr(dock, 'longp', None),
-                getattr(dock, 'transp', None),
+            and self
+            in (
+                getattr(dock, "longp", None),
+                getattr(dock, "transp", None),
             )
         )
-        ext = None if profile_uv else getattr(self.canvas, '_data_ext', None)
+        ext = None if profile_uv else getattr(self.canvas, "_data_ext", None)
         if ext is None or ext.isEmpty():
             fit_from = None
-            if dock is not None and hasattr(dock, '_pane_fit_layers'):
+            if dock is not None and hasattr(dock, "_pane_fit_layers"):
                 with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                     fit_from = dock._pane_fit_layers(self)
             srcs = fit_from if fit_from else (self.canvas.layers() or [])
@@ -1522,14 +1609,14 @@ class PlotPane(QWidget):
 
     def export_image(self):
         if self.wrap.width() < 20 or self.wrap.height() < 20:
-            QMessageBox.warning(self, 'Export', 'The view is too small to export.')
+            QMessageBox.warning(self, "Export", "The view is too small to export.")
             return
-        layer_name = ''
+        layer_name = ""
         layers = self.canvas.layers()
         if layers:
             layer_name = layers[0].name()
         dock = self._find_dock()
-        density_on = bool(dock is not None and getattr(dock, 'density_on', False))
+        density_on = bool(dock is not None and getattr(dock, "density_on", False))
         data_w_m = data_h_m = 0.0
         world = self._export_world_rect()
         if world is not None:
@@ -1540,51 +1627,57 @@ class PlotPane(QWidget):
             groups, _gf = self.overlay._legend_entries()
             reserve_legend = bool(groups)
         dlg = E.ExportImageDialog(
-            self, title=self.title, subtitle=layer_name, bg=QColor('#ffffff'),
+            self,
+            title=self.title,
+            subtitle=layer_name,
+            bg=QColor("#ffffff"),
             label_size_pt=E.DEFAULT_LEVEL_LABEL_PT,
             density_on=density_on,
-            data_w_m=data_w_m, data_h_m=data_h_m,
+            data_w_m=data_w_m,
+            data_h_m=data_h_m,
             theme=UI_THEME,
             reserve_legend=reserve_legend,
         )
-        exec_fn = getattr(dlg, 'exec', None) or dlg.exec_
+        exec_fn = getattr(dlg, "exec", None) or dlg.exec_
         if exec_fn() != dlg.Accepted:
             return
         opts = dlg.values()
-        fmt = str(opts.get('format') or 'png').lower()
-        if fmt == 'svg':
+        fmt = str(opts.get("format") or "png").lower()
+        if fmt == "svg":
             path, _flt = QFileDialog.getSaveFileName(
-                self, 'Export SVG',
-                _suggest_export(opts['title'] or self.title, 'svg'),
-                'SVG (*.svg)',
+                self,
+                "Export SVG",
+                _suggest_export(opts["title"] or self.title, "svg"),
+                "SVG (*.svg)",
             )
             if not path:
                 return
-            if not path.lower().endswith('.svg'):
-                path += '.svg'
+            if not path.lower().endswith(".svg"):
+                path += ".svg"
             ok = self._render_export_svg(opts, path)
         else:
             path, _flt = QFileDialog.getSaveFileName(
-                self, 'Export PNG',
-                _suggest_export(opts['title'] or self.title, 'png'),
-                'PNG (*.png)',
+                self,
+                "Export PNG",
+                _suggest_export(opts["title"] or self.title, "png"),
+                "PNG (*.png)",
             )
             if not path:
                 return
-            if not path.lower().endswith('.png'):
-                path += '.png'
+            if not path.lower().endswith(".png"):
+                path += ".png"
             img = self._render_export(opts)
-            ok = bool(img is not None and not img.isNull() and img.save(path, 'PNG'))
+            ok = bool(img is not None and not img.isNull() and img.save(path, "PNG"))
         if not ok:
-            QMessageBox.warning(self, 'Export', 'Could not write %s' % path)
+            QMessageBox.warning(self, "Export", "Could not write %s" % path)
             return
         win = self.window()
-        iface = getattr(win, 'iface', None)
+        iface = getattr(win, "iface", None)
         if iface is None and win is not None:
-            iface = getattr(win.parent(), 'iface', None) if win.parent() else None
+            iface = getattr(win.parent(), "iface", None) if win.parent() else None
         if iface is not None:
             iface.messageBar().pushInfo(
-                'ARSYSplotQGIS', 'Saved %s' % os.path.basename(path)
+                "ARSYSplotQGIS", "Saved %s" % os.path.basename(path)
             )
 
     def _export_world_rect(self):
@@ -1592,13 +1685,16 @@ class PlotPane(QWidget):
         overlay = self.overlay
         canvas = self.canvas
         data = overlay._data_rect() if overlay is not None else None
-        h_axis = getattr(overlay, 'h_axis', 'x')
-        v_axis = getattr(overlay, 'v_axis', 'y')
+        h_axis = getattr(overlay, "h_axis", "x")
+        v_axis = getattr(overlay, "v_axis", "y")
         if data is not None and not data.isEmpty():
             return snap_world_rect(
-                data.xMinimum(), data.xMaximum(),
-                data.yMinimum(), data.yMaximum(),
-                h_axis, v_axis,
+                data.xMinimum(),
+                data.xMaximum(),
+                data.yMinimum(),
+                data.yMaximum(),
+                h_axis,
+                v_axis,
             )
         xform = canvas.getCoordinateTransform()
         if overlay is not None and xform is not None:
@@ -1618,49 +1714,55 @@ class PlotPane(QWidget):
         """Walk parents to the workspace (main pane or zoom window)."""
         w = self
         while w is not None:
-            if hasattr(w, 'build_paper_density') and hasattr(w, '_pane_draw_layers'):
+            if hasattr(w, "build_paper_density") and hasattr(w, "_pane_draw_layers"):
                 return w
             w = w.parent()
         return None
 
     def _export_layout(self, opts):
         """Paper geometry at true 1∶N (Lite parity). Returns None if no world."""
-        bg = opts['bg']
-        dpi = max(72, int(opts.get('dpi') or 300))
+        # Sheet is always white; optional colour fills the data frame only.
+        paper_bg = QColor(PAPER_BG)
+        use_bg = bool(opts.get("use_background", False))
+        plot_bg = QColor(opts.get("bg") or PAPER_BG)
+        if not plot_bg.isValid():
+            plot_bg = QColor(PAPER_BG)
+        if not use_bg:
+            plot_bg = QColor(PAPER_BG)
+        dpi = max(72, int(opts.get("dpi") or 300))
         world = self._export_world_rect()
         if world is None:
             return None
         xmin, xmax, ymin, ymax = world
         data_w = max(xmax - xmin, 1e-6)
         data_h = max(ymax - ymin, 1e-6)
-        title = (opts.get('title') or '').strip()
-        subtitle = (opts.get('subtitle') or '').strip()
+        title = (opts.get("title") or "").strip()
+        subtitle = (opts.get("subtitle") or "").strip()
         try:
-            label_pt = int(opts.get('label_size_pt', E.DEFAULT_LEVEL_LABEL_PT))
+            label_pt = int(opts.get("label_size_pt", E.DEFAULT_LEVEL_LABEL_PT))
         except (TypeError, ValueError):
             label_pt = E.DEFAULT_LEVEL_LABEL_PT
         label_pt = max(6, min(36, label_pt))
-        ink = QColor('#1a1816') if E.is_light_color(bg) else QColor('#fff5e6')
+        # Paper chrome is always dark-on-white (independent of plot fill).
+        ink = QColor(PAPER_INK)
 
         dock = self._find_dock()
         groups, group_field = self.overlay._legend_entries()
-        want_legend = bool(opts.get('show_legend', True))
+        want_legend = bool(opts.get("show_legend", True))
         show_groups = bool(groups) and want_legend
         want_colorbar = bool(
             dock is not None
             and dock.density_on
-            and dock.density_mode in ('heatmap', 'both')
+            and dock.density_mode in ("heatmap", "both")
         )
 
         paper_w_mm, paper_h_mm = E.paper_size_mm(
-            opts.get('paper') or 'A4',
-            opts.get('orientation') or 'landscape',
+            opts.get("paper") or "A4",
+            opts.get("orientation") or "landscape",
         )
         # Lite layoutPlot margins (shared via E.plot_avail_mm).
         margin = E.LAYOUT_MARGIN
-        pad_b = (
-            E.LAYOUT_AXIS_LABEL + E.LAYOUT_TICK_PAD + E.LAYOUT_SCALE_BAR_H
-        )
+        pad_b = E.LAYOUT_AXIS_LABEL + E.LAYOUT_TICK_PAD + E.LAYOUT_SCALE_BAR_H
         side_gap_mm = E.LAYOUT_LEGEND_GAP
 
         # First pass: full width (legend place decided after the drawing size).
@@ -1669,13 +1771,19 @@ class PlotPane(QWidget):
             side_reserve += 26.0 + max(0.0, 18.0 - side_gap_mm)
 
         avail_w, avail_h, lay = E.plot_avail_mm(
-            paper_w_mm, paper_h_mm, title, subtitle,
+            paper_w_mm,
+            paper_h_mm,
+            title,
+            subtitle,
             side_reserve_mm=side_reserve,
         )
         scale_n = E.resolve_scale_n(
-            opts.get('scale_mode') or 'auto',
-            opts.get('scale_n') or E.DEFAULT_SCALE_N,
-            data_w, data_h, avail_w, avail_h,
+            opts.get("scale_mode") or "auto",
+            opts.get("scale_n") or E.DEFAULT_SCALE_N,
+            data_w,
+            data_h,
+            avail_w,
+            avail_h,
         )
         mm_per_m = 1000.0 / float(scale_n)
         drawn_w = data_w * mm_per_m
@@ -1689,35 +1797,49 @@ class PlotPane(QWidget):
         legend_plan = None
         if show_groups:
             legend_plan = paper_legend_plan(
-                groups, group_field, plot_h, plot_w, dpi,
-                drawn_w_mm=drawn_w, drawn_h_mm=drawn_h,
-                avail_w_mm=avail_w, avail_h_mm=avail_h,
-                paper_w_mm=paper_w_mm, paper_h_mm=paper_h_mm,
+                groups,
+                group_field,
+                plot_h,
+                plot_w,
+                dpi,
+                drawn_w_mm=drawn_w,
+                drawn_h_mm=drawn_h,
+                avail_w_mm=avail_w,
+                avail_h_mm=avail_h,
+                paper_w_mm=paper_w_mm,
+                paper_h_mm=paper_h_mm,
             )
         extra_r = 0.0
         extra_b = 0.0
         if want_colorbar:
             extra_r += 26.0
-        if legend_plan and legend_plan.get('place') == 'side':
+        if legend_plan and legend_plan.get("place") == "side":
             extra_r += paper_legend_side_width_mm(legend_plan, dpi)
             if want_colorbar:
                 extra_r += 3.0
-        elif legend_plan and legend_plan.get('place') == 'below':
+        elif legend_plan and legend_plan.get("place") == "below":
             extra_b += paper_legend_below_height_mm(legend_plan, dpi)
-        if want_colorbar or (
-            legend_plan and legend_plan.get('place') == 'side'
-        ):
+        if want_colorbar or (legend_plan and legend_plan.get("place") == "side"):
             extra_r += max(side_gap_mm, 6.0)
 
         # Recompute available area with legend reservation, then re-center.
         avail_w, avail_h, lay = E.plot_avail_mm(
-            paper_w_mm, paper_h_mm, title, subtitle,
-            side_reserve_mm=extra_r, below_reserve_mm=extra_b,
+            paper_w_mm,
+            paper_h_mm,
+            title,
+            subtitle,
+            side_reserve_mm=extra_r,
+            below_reserve_mm=extra_b,
         )
         # Re-resolve scale if auto (legend ate space).
-        if str(opts.get('scale_mode') or 'auto').lower() != 'custom':
+        if str(opts.get("scale_mode") or "auto").lower() != "custom":
             scale_n = E.resolve_scale_n(
-                'auto', E.DEFAULT_SCALE_N, data_w, data_h, avail_w, avail_h,
+                "auto",
+                E.DEFAULT_SCALE_N,
+                data_w,
+                data_h,
+                avail_w,
+                avail_h,
             )
             mm_per_m = 1000.0 / float(scale_n)
             drawn_w = data_w * mm_per_m
@@ -1728,20 +1850,25 @@ class PlotPane(QWidget):
             plot_h = max(1, int(round(E.mm_to_px(inner_h_mm, dpi))))
             if show_groups:
                 legend_plan = paper_legend_plan(
-                    groups, group_field, plot_h, plot_w, dpi,
-                    prefer_place=(
-                        legend_plan.get('place') if legend_plan else None
-                    ),
-                    drawn_w_mm=drawn_w, drawn_h_mm=drawn_h,
-                    avail_w_mm=avail_w, avail_h_mm=avail_h,
-                    paper_w_mm=paper_w_mm, paper_h_mm=paper_h_mm,
+                    groups,
+                    group_field,
+                    plot_h,
+                    plot_w,
+                    dpi,
+                    prefer_place=(legend_plan.get("place") if legend_plan else None),
+                    drawn_w_mm=drawn_w,
+                    drawn_h_mm=drawn_h,
+                    avail_w_mm=avail_w,
+                    avail_h_mm=avail_h,
+                    paper_w_mm=paper_w_mm,
+                    paper_h_mm=paper_h_mm,
                 )
 
         # Origin of the plot frame on the paper (centred in remaining area).
         free_w = max(0.0, avail_w - inner_w_mm)
         free_h = max(0.0, avail_h - inner_h_mm)
-        left_mm = lay['left'] + free_w * 0.5
-        top_mm = lay['top'] + free_h * 0.5
+        left_mm = lay["left"] + free_w * 0.5
+        top_mm = lay["top"] + free_h * 0.5
         left = int(round(E.mm_to_px(left_mm, dpi)))
         top = int(round(E.mm_to_px(top_mm, dpi)))
         right = left + plot_w
@@ -1750,89 +1877,106 @@ class PlotPane(QWidget):
         out_h = max(1, int(round(E.mm_to_px(paper_h_mm, dpi))))
 
         return {
-            'bg': bg,
-            'dpi': dpi,
-            'ink': ink,
-            'title': title,
-            'subtitle': subtitle,
-            'label_pt': label_pt,
-            'margin': margin,
-            'pad_b': pad_b,
-            'side_gap_mm': side_gap_mm,
-            'xmin': xmin, 'xmax': xmax, 'ymin': ymin, 'ymax': ymax,
-            'plot_w': plot_w, 'plot_h': plot_h,
-            'left': left, 'top': top, 'right': right, 'bottom': bottom,
-            'out_w': out_w, 'out_h': out_h,
-            'dock': dock,
-            'groups': groups,
-            'group_field': group_field,
-            'show_groups': show_groups,
-            'legend_plan': legend_plan,
-            'scale_n': int(scale_n),
+            "paper_bg": paper_bg,
+            "plot_bg": plot_bg,
+            "dpi": dpi,
+            "ink": ink,
+            "title": title,
+            "subtitle": subtitle,
+            "label_pt": label_pt,
+            "margin": margin,
+            "pad_b": pad_b,
+            "side_gap_mm": side_gap_mm,
+            "xmin": xmin,
+            "xmax": xmax,
+            "ymin": ymin,
+            "ymax": ymax,
+            "plot_w": plot_w,
+            "plot_h": plot_h,
+            "left": left,
+            "top": top,
+            "right": right,
+            "bottom": bottom,
+            "out_w": out_w,
+            "out_h": out_h,
+            "dock": dock,
+            "groups": groups,
+            "group_field": group_field,
+            "show_groups": show_groups,
+            "legend_plan": legend_plan,
+            "scale_n": int(scale_n),
         }
 
     def _paint_export(self, painter, layout, opts):
         """Paint a prepared export layout onto ``painter`` (PNG or SVG)."""
-        bg = layout['bg']
-        dpi = layout['dpi']
-        ink = layout['ink']
-        title = layout['title']
-        subtitle = layout['subtitle']
-        label_pt = layout['label_pt']
-        margin = layout['margin']
-        pad_b = layout['pad_b']
-        side_gap_mm = layout['side_gap_mm']
-        xmin, xmax = layout['xmin'], layout['xmax']
-        ymin, ymax = layout['ymin'], layout['ymax']
-        plot_w, plot_h = layout['plot_w'], layout['plot_h']
-        left, top = layout['left'], layout['top']
-        right, bottom = layout['right'], layout['bottom']
-        out_w, out_h = layout['out_w'], layout['out_h']
-        dock = layout['dock']
-        groups = layout['groups']
-        group_field = layout['group_field']
-        show_groups = layout['show_groups']
-        legend_plan = layout['legend_plan']
-        scale_n = layout['scale_n']
+        paper_bg = layout["paper_bg"]
+        plot_bg = layout["plot_bg"]
+        dpi = layout["dpi"]
+        ink = layout["ink"]
+        title = layout["title"]
+        subtitle = layout["subtitle"]
+        label_pt = layout["label_pt"]
+        margin = layout["margin"]
+        pad_b = layout["pad_b"]
+        side_gap_mm = layout["side_gap_mm"]
+        xmin, xmax = layout["xmin"], layout["xmax"]
+        ymin, ymax = layout["ymin"], layout["ymax"]
+        plot_w, plot_h = layout["plot_w"], layout["plot_h"]
+        left, top = layout["left"], layout["top"]
+        right, bottom = layout["right"], layout["bottom"]
+        out_w, out_h = layout["out_w"], layout["out_h"]
+        dock = layout["dock"]
+        groups = layout["groups"]
+        group_field = layout["group_field"]
+        show_groups = layout["show_groups"]
+        legend_plan = layout["legend_plan"]
+        scale_n = layout["scale_n"]
 
         paper_rst = paper_ctr = None
         layers = []
         bar = None
         try:
             if dock is not None:
+                # Paper uses full slider mm; screen uses a softer factor.
+                dock._apply_point_sizes(for_paper=True)
                 layers.extend(dock._pane_draw_layers(self))
                 if dock.density_on:
-                    with _qgis_busy('ARSYSplotQGIS: paper density'):
+                    with _qgis_busy("ARSYSplotQGIS: paper density"):
                         paper_rst, paper_ctr = dock.build_paper_density(
-                            self, (xmin, xmax, ymin, ymax), plot_w, plot_h,
+                            self,
+                            (xmin, xmax, ymin, ymax),
+                            plot_w,
+                            plot_h,
                             label_size_pt=label_pt,
                         )
                     if paper_ctr is not None:
                         layers.append(paper_ctr)
-                    if (
-                        dock.density_mode in ('heatmap', 'both')
-                        and paper_rst is not None
-                    ):
+                    show_heat = dock.density_mode in ("heatmap", "both")
+                    if show_heat and paper_rst is not None:
                         layers.append(paper_rst)
+                    # Colour bar only when the heatmap fill is on the figure.
                     bar = (
                         D.heatmap_legend(paper_rst)
-                        if paper_rst is not None else None
+                        if show_heat and paper_rst is not None
+                        else None
                     )
             if not layers:
                 layers = [
-                    lyr for lyr in (self.canvas.layers() or [])
-                    if lyr is not None
+                    lyr for lyr in (self.canvas.layers() or []) if lyr is not None
                 ]
-                if bar is None:
+                allow_bar = dock is None or dock.density_mode in ("heatmap", "both")
+                if bar is None and allow_bar:
                     for lyr in layers:
-                        if lyr.customProperty('arsysplotqgis') == 'density-raster':
+                        if lyr.customProperty("arsysplotqgis") == "density-raster":
                             bar = D.heatmap_legend(lyr)
                             break
 
             painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
             painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
             painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
-            painter.fillRect(0, 0, out_w, out_h, bg)
+            # Sheet always white; plot fill is only the data frame.
+            painter.fillRect(0, 0, out_w, out_h, paper_bg)
+            painter.fillRect(left, top, plot_w, plot_h, plot_bg)
 
             y = E.mm_to_px(margin, dpi)
             if title:
@@ -1843,7 +1987,8 @@ class PlotPane(QWidget):
                 painter.setPen(ink)
                 painter.drawText(
                     QRect(
-                        int(E.mm_to_px(margin, dpi)), int(y),
+                        int(E.mm_to_px(margin, dpi)),
+                        int(y),
                         out_w - int(E.mm_to_px(margin * 2, dpi)),
                         int(E.mm_to_px(7.5, dpi)),
                     ),
@@ -1855,12 +2000,11 @@ class PlotPane(QWidget):
                 font = QFont()
                 font.setPixelSize(E.pt_to_px(9, dpi))
                 painter.setFont(font)
-                painter.setPen(
-                    QColor('#5a554e') if E.is_light_color(bg) else ink
-                )
+                painter.setPen(QColor(PAPER_MUTED))
                 painter.drawText(
                     QRect(
-                        int(E.mm_to_px(margin, dpi)), int(y),
+                        int(E.mm_to_px(margin, dpi)),
+                        int(y),
                         out_w - int(E.mm_to_px(margin * 2, dpi)),
                         int(E.mm_to_px(5.2, dpi)),
                     ),
@@ -1871,17 +2015,20 @@ class PlotPane(QWidget):
             settings = self.canvas.mapSettings()
             settings.setOutputSize(QSize(plot_w, plot_h))
             settings.setOutputDpi(float(dpi))
-            settings.setBackgroundColor(bg)
+            settings.setBackgroundColor(plot_bg)
             settings.setExtent(QgsRectangle(xmin, ymin, xmax, ymax))
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 settings.setLayers(list(layers))
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 from qgis.core import Qgis
-                flags = getattr(Qgis, 'MapSettingsFlag', None)
+
+                flags = getattr(Qgis, "MapSettingsFlag", None)
                 if flags is not None:
                     for name in (
-                        'Antialiasing', 'HighQualityImageTransforms',
-                        'DrawLabeling', 'UseAdvancedEffects',
+                        "Antialiasing",
+                        "HighQualityImageTransforms",
+                        "DrawLabeling",
+                        "UseAdvancedEffects",
                     ):
                         flag = getattr(flags, name, None)
                         if flag is not None:
@@ -1898,9 +2045,11 @@ class PlotPane(QWidget):
             painter.restore()
 
             z_stretch = 1.0
+            z_step = None
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-                if self.v_axis == 'z' and self.overlay is not None:
+                if self.v_axis == "z" and self.overlay is not None:
                     z_stretch = float(self.overlay.z_stretch())
+                    z_step = self.overlay.z_step()
             fmt_h = fmt_v = None
             show_grid = True
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
@@ -1908,28 +2057,39 @@ class PlotPane(QWidget):
                     show_grid = bool(self.overlay._show_grid)
                     fmt_h, fmt_v = self.overlay.axis_formatters()
             bar_info = paint_paper_axes(
-                painter, left, top, right, bottom,
-                xmin, xmax, ymin, ymax,
-                self.h_axis, self.v_axis, self.h_label, self.v_label, dpi,
+                painter,
+                left,
+                top,
+                right,
+                bottom,
+                xmin,
+                xmax,
+                ymin,
+                ymax,
+                self.h_axis,
+                self.v_axis,
+                self.h_label,
+                self.v_label,
+                dpi,
                 z_stretch=z_stretch,
                 show_grid=show_grid,
                 fmt_h=fmt_h,
                 fmt_v=fmt_v,
                 scale_n=scale_n,
+                z_step=z_step,
             )
             # 1∶N immediately after the scale bar (complementary to the graphic).
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 bar_px = float(bar_info[1]) if bar_info else 0.0
                 if bar_px <= 0:
                     from .axes_grid import pick_scale_bar_metres
+
                     dx_m = max(float(xmax) - float(xmin), 1e-9)
-                    bar_px = (
-                        pick_scale_bar_metres(scale_n) / dx_m
-                    ) * float(plot_w)
+                    bar_px = (pick_scale_bar_metres(scale_n) / dx_m) * float(plot_w)
                 font = QFont()
                 font.setPixelSize(E.pt_to_px(7, dpi))
                 painter.setFont(font)
-                painter.setPen(QColor('#6b645c') if E.is_light_color(bg) else ink)
+                painter.setPen(QColor(PAPER_MUTED))
                 painter.drawText(
                     QRect(
                         int(left + bar_px + E.mm_to_px(2.5, dpi)),
@@ -1938,29 +2098,34 @@ class PlotPane(QWidget):
                         int(E.mm_to_px(5, dpi)),
                     ),
                     Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                    '1∶%d' % int(scale_n),
+                    "1∶%d" % int(scale_n),
                 )
             # Page footer (Lite parity).
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-                view = (self.title or 'Plot').strip()
-                paper = str(opts.get('paper') or 'A4')
-                orient = str(opts.get('orientation') or 'landscape')
+                view = (self.title or "Plot").strip()
+                paper = str(opts.get("paper") or "A4")
+                orient = str(opts.get("orientation") or "landscape")
                 n_pts = 0
                 if dock is not None:
                     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-                        n_pts = int(getattr(dock, 'point_count', 0) or 0)
-                    if not n_pts and getattr(dock, 'source', None) is not None:
-                        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                        n_pts = int(getattr(dock, "point_count", 0) or 0)
+                    if not n_pts and getattr(dock, "source", None) is not None:
+                        with suppress(
+                            AttributeError, RuntimeError, TypeError, ValueError
+                        ):
                             n_pts = int(dock.source.featureCount())
-                foot = 'Made by ArcheSystem — ARSYSplotQGIS · %s · %s %s · 1∶%d' % (
-                    view, paper, orient, int(scale_n),
+                foot = "Made by ArcheSystem — ARSYSplotQGIS · %s · %s %s · 1∶%d" % (
+                    view,
+                    paper,
+                    orient,
+                    int(scale_n),
                 )
                 if n_pts:
-                    foot += ' · %d pts' % n_pts
+                    foot += " · %d pts" % n_pts
                 font = QFont()
                 font.setPixelSize(E.pt_to_px(6, dpi))
                 painter.setFont(font)
-                painter.setPen(QColor('#9a9288'))
+                painter.setPen(QColor(PAPER_FAINT))
                 painter.drawText(
                     QRect(
                         int(E.mm_to_px(margin, dpi)),
@@ -1979,26 +2144,49 @@ class PlotPane(QWidget):
                     vmin, vmax, colors = bar[:3]
                     bounds = None
                 used = D.paint_colorbar(
-                    painter, side_x, top, bottom, vmin, vmax, colors, dpi, ink,
+                    painter,
+                    side_x,
+                    top,
+                    bottom,
+                    vmin,
+                    vmax,
+                    colors,
+                    dpi,
+                    ink,
                     bounds=bounds,
                 )
                 side_x += used + E.mm_to_px(3.0, dpi)
             if show_groups and legend_plan is not None:
-                if legend_plan.get('place') == 'below':
+                if legend_plan.get("place") == "below":
                     leg_top = bottom + E.mm_to_px(pad_b, dpi)
-                    leg_bottom = leg_top + float(legend_plan['total_h'])
+                    leg_bottom = leg_top + float(legend_plan["total_h"])
                     paint_paper_legend(
-                        painter, groups, group_field,
-                        left, leg_top, leg_bottom, dpi, ink,
+                        painter,
+                        groups,
+                        group_field,
+                        left,
+                        leg_top,
+                        leg_bottom,
+                        dpi,
+                        ink,
                         plan=legend_plan,
                     )
                 else:
                     paint_paper_legend(
-                        painter, groups, group_field,
-                        side_x, top, bottom, dpi, ink,
+                        painter,
+                        groups,
+                        group_field,
+                        side_x,
+                        top,
+                        bottom,
+                        dpi,
+                        ink,
                         plan=legend_plan,
                     )
         finally:
+            if dock is not None:
+                with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                    dock._apply_point_sizes(for_paper=False)
             if paper_rst is not None or paper_ctr is not None:
                 D.release_pair(paper_rst, paper_ctr)
 
@@ -2006,11 +2194,9 @@ class PlotPane(QWidget):
         layout = self._export_layout(opts)
         if layout is None:
             return None
-        img = QImage(
-            layout['out_w'], layout['out_h'], QImage.Format.Format_ARGB32
-        )
-        E.apply_png_dpi(img, layout['dpi'])
-        img.fill(layout['bg'])
+        img = QImage(layout["out_w"], layout["out_h"], QImage.Format.Format_ARGB32)
+        E.apply_png_dpi(img, layout["dpi"])
+        img.fill(layout["paper_bg"])
         painter = QPainter(img)
         try:
             self._paint_export(painter, layout, opts)
@@ -2028,12 +2214,12 @@ class PlotPane(QWidget):
             return False
         gen = QSvgGenerator()
         gen.setFileName(path)
-        gen.setSize(QSize(layout['out_w'], layout['out_h']))
-        gen.setViewBox(QRect(0, 0, layout['out_w'], layout['out_h']))
+        gen.setSize(QSize(layout["out_w"], layout["out_h"]))
+        gen.setViewBox(QRect(0, 0, layout["out_w"], layout["out_h"]))
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-            gen.setResolution(int(layout['dpi']))
+            gen.setResolution(int(layout["dpi"]))
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-            gen.setTitle((opts.get('title') or self.title or 'ARSYSplotQGIS'))
+            gen.setTitle((opts.get("title") or self.title or "ARSYSplotQGIS"))
         painter = QPainter(gen)
         try:
             self._paint_export(painter, layout, opts)
@@ -2047,11 +2233,11 @@ class PlotPane(QWidget):
         else:
             layers = [layer] if layer is not None else []
         enabled = bool(layers)
-        if hasattr(self, 'btn_zoom'):
+        if hasattr(self, "btn_zoom"):
             self.btn_zoom.setEnabled(enabled)
-        if hasattr(self, 'btn_fit'):
+        if hasattr(self, "btn_fit"):
             self.btn_fit.setEnabled(enabled)
-        if hasattr(self, 'btn_export'):
+        if hasattr(self, "btn_export"):
             self.btn_export.setEnabled(enabled)
         if not layers:
             self.canvas.setLayers([])
@@ -2080,79 +2266,463 @@ class ZoomWindow(QMainWindow):
         super().__init__(parent)
         self._force_close = False
         self._layer = layer
-        self.setWindowTitle('ARSYSplotQGIS · Zoom · %s' % pane.title)
+        self._dock = parent
+        self._group_btns = {}
+        self._syncing = False
+        self.setWindowTitle("ARSYSplotQGIS · Zoom · %s" % pane.title)
         self.setWindowFlag(Qt.WindowType.Window, True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.resize(1100, 800)
-        self.setMinimumSize(520, 400)
+        self.setMinimumSize(560, 480)
+
         bar = QHBoxLayout()
-        self._hint = QLabel('Wheel zoom · drag pan · Esc closes')
-        bar.addWidget(self._hint, 1)
+        bar.setSpacing(6)
+        self._lbl_size_title = QLabel("Point size")
+        bar.addWidget(self._lbl_size_title)
+        self.sld_size = QSlider(Qt.Orientation.Horizontal)
+        self.sld_size.setRange(0, 1000)
+        self.sld_size.setSingleStep(1)
+        self.sld_size.setPageStep(10)
+        self.sld_size.setTracking(True)
+        self.sld_size.setTickPosition(QSlider.TickPosition.NoTicks)
+        self.sld_size.setMinimumWidth(100)
+        self.sld_size.setMaximumWidth(180)
+        self.sld_size.setToolTip(
+            L.html_tooltip(
+                "Point diameter in **mm** on paper (range **0–10**).",
+                "Same control as the main Point size — changes all views.",
+            )
+        )
+        self.sld_size.valueChanged.connect(self._on_size)
+        bar.addWidget(self.sld_size, 1)
+        self.lbl_size = QLabel("2.20 mm")
+        self.lbl_size.setMinimumWidth(52)
+        bar.addWidget(self.lbl_size)
+        self._lbl_model = QLabel("Model")
+        bar.addWidget(self._lbl_model)
+        self.cmb_point_shape = QComboBox()
+        for sid, label in L.MARKER_SHAPES:
+            self.cmb_point_shape.addItem(label, sid)
+        self.cmb_point_shape.setMinimumWidth(100)
+        self.cmb_point_shape.setMaximumWidth(160)
+        self.cmb_point_shape.setToolTip(
+            L.html_tooltip(
+                "**Point model** — same as the main dock.",
+            )
+        )
+        self.cmb_point_shape.currentIndexChanged.connect(self._on_shape)
+        bar.addWidget(self.cmb_point_shape)
+        bar.addStretch(1)
+        # Cursor XYZ (this Zoom canvas only) — centred in the free bar space.
+        self.lbl_coords = QLabel("Coordinates: --")
+        self.lbl_coords.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_coords.setMinimumWidth(220)
+        self.lbl_coords.setToolTip(
+            L.html_tooltip(
+                "**Cursor position** on this Zoom view.",
+                "Three values in **X Y Z** order (real metres). ",
+            )
+        )
+        bar.addWidget(self.lbl_coords, 1)
+        bar.addStretch(1)
+        self.btn_measure = _icon_button(
+            "measure.svg",
+            "Measure **distance** between two clicks on this zoom view "
+            "(real metres; Stretch Z does not change the value). "
+            "**Esc** or click again to stop.",
+        )
+        self.btn_measure.setCheckable(True)
+        self.btn_measure.toggled.connect(self._on_measure_toggled)
+        bar.addWidget(self.btn_measure)
+        # Inherit clash-free stroke from dock Group colours.
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            if parent is not None and hasattr(parent, "_sync_measure_stroke"):
+                parent._sync_measure_stroke()
+        self._measure_blink_bright = True
+        self._measure_blink_timer = QTimer(self)
+        self._measure_blink_timer.setInterval(450)
+        self._measure_blink_timer.timeout.connect(self._blink_measure_btn)
         self.btn_fit = _icon_button(
-            'fit.svg',
-            '**Fit** the view to the data frame (after zoom or pan).',
+            "fit.svg",
+            "**Fit** the view to the data frame (after zoom or pan).",
         )
         self.btn_fit.clicked.connect(self._fit)
         bar.addWidget(self.btn_fit)
         self.btn_export = _icon_button(
-            'export.svg',
-            'Export **PNG / SVG** at true paper scale (1∶N).',
+            "export.svg",
+            "Export **PNG / SVG** at true paper scale (1∶N).",
         )
         self.btn_export.clicked.connect(lambda: self.pane.export_image())
         bar.addWidget(self.btn_export)
         self.btn_close = _icon_button(
-            'close.svg',
-            '**Close** this zoom window (Esc).',
+            "close.svg",
+            "**Close** this zoom window (Esc).",
         )
         self.btn_close.clicked.connect(self.close)
         bar.addWidget(self.btn_close)
+        self._measure_on = False
+
         self.pane = PlotPane(
             pane.title, pane.h_axis, pane.v_axis, pane.h_label, pane.v_label
         )
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-            self.pane.pane_role = getattr(pane, 'pane_role', None)
+            self.pane.pane_role = getattr(pane, "pane_role", None)
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-            src = getattr(pane, 'overlay', None)
+            src = getattr(pane, "overlay", None)
             dst = self.pane.overlay
             if src is not None and dst is not None:
-                dst.set_show_grid(bool(getattr(src, '_show_grid', True)))
-                dst.set_square_grid(bool(getattr(src, '_square_grid', False)))
-                dst.set_quadre_formatters(getattr(src, '_quadre_fmt', None))
-                if pane.v_axis == 'z':
+                dst.set_show_grid(bool(getattr(src, "_show_grid", True)))
+                dst.set_square_grid(bool(getattr(src, "_square_grid", False)))
+                dst.set_quadre_formatters(getattr(src, "_quadre_fmt", None))
+                if pane.v_axis == "z":
                     dst.set_z_stretch(src.z_stretch())
+                    dst.set_z_step(src.z_step())
+
+        chip_bar = QHBoxLayout()
+        chip_bar.setSpacing(6)
+        self.btn_all = QPushButton("All")
+        self.btn_none = QPushButton("None")
+        self.btn_all.setToolTip(L.html_tooltip("Show **every** group."))
+        self.btn_none.setToolTip(L.html_tooltip("Hide **every** group."))
+        self.btn_all.clicked.connect(lambda: self._set_all_groups(True))
+        self.btn_none.clicked.connect(lambda: self._set_all_groups(False))
+        chip_bar.addWidget(self.btn_all)
+        chip_bar.addWidget(self.btn_none)
+        chip_bar.addStretch(1)
+        self.group_wrap = FlowHost()
+        self.group_layout = FlowLayout(
+            self.group_wrap, margin=0, h_spacing=3, v_spacing=2
+        )
+        self._group_scroll = QScrollArea()
+        self._group_scroll.setObjectName("arsysZoomGroupScroll")
+        self._group_scroll.setWidgetResizable(True)
+        self._group_scroll.setWidget(self.group_wrap)
+        self._group_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff,
+        )
+        self._group_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded,
+        )
+        self._group_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._group_scroll.setMinimumHeight(28)
+        self._group_scroll.setMaximumHeight(160)
+
         root = QWidget()
         col = QVBoxLayout(root)
         col.setContentsMargins(8, 8, 8, 8)
+        col.setSpacing(6)
         col.addLayout(bar)
         col.addWidget(self.pane, 1)
+        col.addLayout(chip_bar)
+        col.addWidget(self._group_scroll, 0)
         self.setCentralWidget(root)
         self.apply_theme()
+        self.sync_from_dock(rebuild_chips=True)
         self.reload(layer, pane.canvas)
 
     def apply_theme(self):
         t = UI_THEME
-        light = t.get('name') == 'light'
-        ink = t.get('ink', '#1a1816' if light else '#fff5e6')
+        light = t.get("name") == "light"
+        ink = t.get("ink", "#1a1816" if light else "#fff5e6")
         self.setStyleSheet(
-            'QMainWindow { background:%(bg)s; }'
-            'QWidget { background:%(bg)s; color:%(ink)s; }'
-            % t
-            + TOOLTIP_CSS
+            "QMainWindow { background:%(bg)s; }"
+            "QWidget { background:%(bg)s; color:%(ink)s; }" % t + TOOLTIP_CSS
         )
-        self._hint.setStyleSheet('color:%s;' % t['muted'])
+        for lab in (
+            getattr(self, "_lbl_size_title", None),
+            getattr(self, "lbl_size", None),
+            getattr(self, "_lbl_model", None),
+        ):
+            if lab is not None:
+                lab.setStyleSheet("color:%s;" % ink)
+        lab_c = getattr(self, "lbl_coords", None)
+        if lab_c is not None:
+            muted = t.get("muted") or ink
+            lab_c.setStyleSheet(
+                "color:%s; font-family:monospace; font-size:11px;" % muted
+            )
         css = _pane_icon_btn_css(light)
         for btn in (
-            getattr(self, 'btn_fit', None),
-            getattr(self, 'btn_export', None),
-            getattr(self, 'btn_close', None),
+            getattr(self, "btn_measure", None),
+            getattr(self, "btn_fit", None),
+            getattr(self, "btn_export", None),
+            getattr(self, "btn_close", None),
         ):
             if btn is None:
                 continue
             btn.setStyleSheet(css)
-            name = getattr(btn, '_arsys_icon', None)
+            name = getattr(btn, "_arsys_icon", None)
             if name:
                 btn.setIcon(_themed_icon(name, ink, 14))
         self.pane.apply_theme()
+
+    def _on_measure_toggled(self, on):
+        self._measure_on = bool(on)
+        ov = getattr(self.pane, "overlay", None)
+        if ov is None:
+            self._set_measure_blink(False)
+            return
+        ov.clear_measure()
+        if self._measure_on:
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                dock = self._dock
+                if dock is not None and hasattr(dock, "_sync_measure_stroke"):
+                    dock._sync_measure_stroke()
+            ov._measure_click = self._on_measure_click
+            ov._escape_cb = self._clear_measure
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                ov._restore_idle_cursor()
+            self._set_measure_blink(True)
+        else:
+            ov._measure_click = None
+            ov._escape_cb = None
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                ov._restore_idle_cursor()
+            self._set_measure_blink(False)
+
+    def _on_measure_click(self, px, py):
+        if not self._measure_on:
+            return
+        ov = getattr(self.pane, "overlay", None)
+        if ov is None:
+            return
+        xy = ov._profile_screen_to_map(px, py)
+        if xy is None:
+            return
+        if ov._measure_a is None or ov._measure_b is not None:
+            ov.set_measure(a=xy, b=None, live=None)
+            return
+        ov.set_measure(a=ov._measure_a, b=xy, live=None)
+
+    def _set_measure_blink(self, on):
+        timer = getattr(self, "_measure_blink_timer", None)
+        if timer is None:
+            return
+        if on:
+            self._measure_blink_bright = True
+            self._apply_measure_btn_blink(True)
+            timer.start()
+        else:
+            timer.stop()
+            self._restore_measure_btn_style()
+
+    def _blink_measure_btn(self):
+        if not self._measure_on:
+            self._set_measure_blink(False)
+            return
+        self._measure_blink_bright = not bool(
+            getattr(self, "_measure_blink_bright", True)
+        )
+        self._apply_measure_btn_blink(self._measure_blink_bright)
+
+    def _apply_measure_btn_blink(self, bright):
+        btn = getattr(self, "btn_measure", None)
+        if btn is None:
+            return
+        if bright:
+            btn.setStyleSheet(
+                "QPushButton { background:#d97726; border:1px solid #f0a050;"
+                "  border-radius:4px; padding:0; }" + TOOLTIP_CSS
+            )
+        else:
+            btn.setStyleSheet(
+                "QPushButton { background:#5a3a18; border:1px solid #d97726;"
+                "  border-radius:4px; padding:0; }" + TOOLTIP_CSS
+            )
+
+    def _restore_measure_btn_style(self):
+        btn = getattr(self, "btn_measure", None)
+        if btn is None:
+            return
+        light = UI_THEME.get("name") == "light"
+        ink = UI_THEME.get("ink", "#fff5e6")
+        btn.setStyleSheet(_pane_icon_btn_css(light))
+        name = getattr(btn, "_arsys_icon", None)
+        if name:
+            btn.setIcon(_themed_icon(name, ink, 14))
+
+    def _clear_measure(self):
+        btn = getattr(self, "btn_measure", None)
+        if btn is not None and btn.isChecked():
+            btn.setChecked(False)
+            return
+        self._measure_on = False
+        self._set_measure_blink(False)
+        ov = getattr(getattr(self, "pane", None), "overlay", None)
+        if ov is not None:
+            ov._measure_click = None
+            ov._escape_cb = None
+            ov.clear_measure()
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                ov._restore_idle_cursor()
+
+    def sync_from_dock(self, rebuild_chips=False):
+        dock = self._dock
+        if dock is None:
+            return
+        self._syncing = True
+        try:
+            size = getattr(dock, "point_size", None)
+            if size is not None:
+                slider = int(round(float(size) * 100.0))
+                slider = max(0, min(1000, slider))
+                self.sld_size.blockSignals(True)
+                self.sld_size.setValue(slider)
+                self.sld_size.blockSignals(False)
+                self.lbl_size.setText("%.2f mm" % float(size))
+            shape = getattr(dock, "point_shape", None)
+            if shape is not None:
+                idx = self.cmb_point_shape.findData(shape)
+                if idx < 0:
+                    cmb = getattr(dock, "cmb_point_shape", None)
+                    if cmb is not None:
+                        idx = self.cmb_point_shape.findData(cmb.currentData())
+                if idx >= 0:
+                    self.cmb_point_shape.blockSignals(True)
+                    self.cmb_point_shape.setCurrentIndex(idx)
+                    self.cmb_point_shape.blockSignals(False)
+            if rebuild_chips or not self._group_btns:
+                self._rebuild_chips()
+            else:
+                self._sync_chip_checked()
+        finally:
+            self._syncing = False
+
+    def _rebuild_chips(self):
+        while self.group_layout.count():
+            item = self.group_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+        self._group_btns = {}
+        dock = self._dock
+        if dock is None:
+            return
+        values = list(getattr(dock, "_group_btns", {}) or {})
+        if not values:
+            QTimer.singleShot(0, self._fit_chip_area)
+            return
+        active = getattr(dock, "active_groups", set()) or set()
+        colors = getattr(dock, "colors", {}) or {}
+        style_shapes = getattr(dock, "_style_shapes", None) or {}
+        for val in values:
+            btn = QPushButton(val)
+            btn.setCheckable(True)
+            btn.setChecked(val in active)
+            tip = val
+            sh = style_shapes.get(val)
+            if sh:
+                tip = "%s · %s" % (val, sh)
+            btn.setToolTip(L.html_tooltip(tip))
+            btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+            color = colors.get(val, QColor("#888"))
+            hexcol = css_hex(color)
+            btn.setStyleSheet(
+                "QPushButton { background:%s; color:#fff; text-align:center;"
+                "  font-size:10px; padding:1px 6px; border-radius:3px;"
+                "  min-height:16px; max-height:18px; }"
+                "QPushButton:checked { background:%s; }"
+                "QPushButton:!checked { background:#5a554e; color:#c8c2b8; }"
+                % (hexcol, hexcol)
+            )
+            btn.adjustSize()
+            btn.toggled.connect(lambda _on, v=val: self._on_chip(v))
+            self.group_layout.addWidget(btn)
+            self._group_btns[val] = btn
+        QTimer.singleShot(0, self._fit_chip_area)
+
+    def _sync_chip_checked(self):
+        dock = self._dock
+        if dock is None:
+            return
+        active = getattr(dock, "active_groups", set()) or set()
+        for val, btn in (self._group_btns or {}).items():
+            want = val in active
+            if btn.isChecked() == want:
+                continue
+            btn.blockSignals(True)
+            btn.setChecked(want)
+            btn.blockSignals(False)
+
+    def _fit_chip_area(self):
+        scroll = getattr(self, "_group_scroll", None)
+        wrap = getattr(self, "group_wrap", None)
+        if scroll is None or wrap is None:
+            return
+        vw = scroll.viewport().width() if scroll.viewport() else 0
+        w = max(int(vw), int(scroll.width()) - 8, 120)
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            wrap.setFixedWidth(w)
+        if wrap.hasHeightForWidth():
+            need = int(wrap.heightForWidth(w))
+        else:
+            need = int(wrap.sizeHint().height())
+        n_btns = len(getattr(self, "_group_btns", {}) or {})
+        if n_btns < 1:
+            need = 28
+        need = max(28, need + 2)
+        cap = 160
+        h = min(need, cap)
+        scroll.setFixedHeight(h)
+        scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+            if need > cap
+            else Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+
+    def _on_size(self, value):
+        if self._syncing:
+            return
+        dock = self._dock
+        if dock is None or getattr(dock, "sld_size", None) is None:
+            return
+        dock.sld_size.setValue(int(value))
+
+    def _on_shape(self, *_args):
+        if self._syncing:
+            return
+        dock = self._dock
+        cmb = getattr(dock, "cmb_point_shape", None) if dock else None
+        if cmb is None:
+            return
+        data = self.cmb_point_shape.currentData()
+        idx = cmb.findData(data)
+        if idx >= 0:
+            cmb.setCurrentIndex(idx)
+
+    def _on_chip(self, val):
+        if self._syncing:
+            return
+        dock = self._dock
+        if dock is None:
+            return
+        btn = self._group_btns.get(val)
+        on = bool(btn is not None and btn.isChecked())
+        dock_btn = (getattr(dock, "_group_btns", None) or {}).get(val)
+        if dock_btn is not None:
+            dock_btn.blockSignals(True)
+            dock_btn.setChecked(on)
+            dock_btn.blockSignals(False)
+        if on:
+            dock.active_groups.add(val)
+        else:
+            dock.active_groups.discard(val)
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            dock._sync_measure_stroke()
+        dock.schedule_filter()
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            dock._sync_zoom_controls(rebuild_chips=False, skip=self)
+
+    def _set_all_groups(self, on):
+        dock = self._dock
+        if dock is None:
+            return
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            dock._set_all_groups(on)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        QTimer.singleShot(0, self._fit_chip_area)
 
     def reload(self, layer, source_canvas=None):
         self._layer = layer
@@ -2170,7 +2740,11 @@ class ZoomWindow(QMainWindow):
                 self.pane.show_layer(self._layer, adaptive=True)
             return
         dst = self.pane.canvas
-        dst._data_ext = QgsRectangle(source_canvas._data_ext) if source_canvas._data_ext else QgsRectangle(ext)
+        dst._data_ext = (
+            QgsRectangle(source_canvas._data_ext)
+            if source_canvas._data_ext
+            else QgsRectangle(ext)
+        )
         dst._user_view = True
         dst._fitting = True
         try:
@@ -2181,7 +2755,7 @@ class ZoomWindow(QMainWindow):
             dst._fitting = False
 
     def _fit(self):
-        ext = getattr(self.pane.canvas, '_data_ext', None)
+        ext = getattr(self.pane.canvas, "_data_ext", None)
         if ext is None or ext.isEmpty():
             ext = L.padded_data_extent(self.pane.canvas.layers())
         if ext is None or ext.isEmpty():
@@ -2191,11 +2765,15 @@ class ZoomWindow(QMainWindow):
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape:
+            if self._measure_on:
+                self._clear_measure()
+                return
             self.close()
             return
         super().keyPressEvent(event)
 
     def closeEvent(self, event):
+        self._clear_measure()
         if self._force_close:
             event.accept()
             return
@@ -2213,9 +2791,9 @@ class ARSYSDock(QMainWindow):
         self.trans_layer = None
         self.long_line_layer = None
         self.trans_line_layer = None
-        self.display_mode = 'points'
+        self.display_mode = "points"
         self._user_picked_draw = False
-        self.group_field = 'group'
+        self.group_field = "group"
         self.active_groups = set()
         self.colors = {}
         self._imported_cmap = {}
@@ -2225,6 +2803,8 @@ class ARSYSDock(QMainWindow):
         self._building = False
         self._force_close = False
         self.point_size = 2.2
+        # Screen mm→px reference. None = Auto (96 DPI, current default).
+        self._point_screen_dpi = None
         self.point_shape = L.DEFAULT_MARKER
         self._style_book = None
         self._style_shapes = {}
@@ -2236,6 +2816,8 @@ class ARSYSDock(QMainWindow):
         self._z_stretch_timer.setSingleShot(True)
         self._z_stretch_timer.timeout.connect(self._rebuild_sections_for_stretch)
         self.cross_hover_on = False
+        self._measure_on = False
+        self._measure_pane = None  # PlotPane locked after first click
         self.point_info = False
         self.point_info_large = False
         self._hover_xyz = None  # (x, y, z) real metres of highlighted record
@@ -2245,6 +2827,7 @@ class ARSYSDock(QMainWindow):
         self._hover_last_pane = None  # survives leave (for Large info rebuild)
         self._hover_px_py = None
         self._hover_pending = None  # (pane, px, py) for throttled hit-test
+        self._coord_source_pane = None  # pane driving Resources Coordinates
         self._hover_timer = QTimer(self)
         self._hover_timer.setSingleShot(True)
         self._hover_timer.timeout.connect(self._run_hover_pending)
@@ -2252,6 +2835,7 @@ class ARSYSDock(QMainWindow):
         self._stage = None
         self._point_info_dirty = False
         self.axis_grid = True
+        self.z_step = None  # None = Auto; else metres (Lite Z step)
         self.square_grid = False
         self._quadre_fmt = None
         self._selected_fid = None
@@ -2261,13 +2845,15 @@ class ARSYSDock(QMainWindow):
         self._find_timer.setSingleShot(True)
         self._find_timer.timeout.connect(self._run_find)
         self.arrow_size = L.ARROW_MM_DEFAULT
+        self.vector_fixed = False
+        self.vector_len_cm = L.VECTOR_LEN_CM_DEFAULT
         self.density_on = False
-        self.density_mode = 'heatmap'
-        self.density_fill = 'bands'
+        self.density_mode = "heatmap"
+        self.density_fill = "bands"
         self._density = {
-            'plan': (None, None),
-            'long': (None, None),
-            'trans': (None, None),
+            "plan": (None, None),
+            "long": (None, None),
+            "trans": (None, None),
         }
         # Manual profile (Phase 1). A/B are (x,y) or None.
         self._profile_a = None
@@ -2282,6 +2868,11 @@ class ARSYSDock(QMainWindow):
         self._profile_cue_timer = QTimer(self)
         self._profile_cue_timer.setInterval(450)
         self._profile_cue_timer.timeout.connect(self._blink_plan_profile_cue)
+        self._measure_blink_bright = True
+        self._measure_blink_timer = QTimer(self)
+        self._measure_blink_timer.setInterval(450)
+        self._measure_blink_timer.timeout.connect(self._blink_measure_btn)
+        self._measure_esc = None  # QShortcut, created after UI
         self._density_timer = QTimer(self)
         self._density_timer.setSingleShot(True)
         self._density_timer.timeout.connect(self._rebuild_density)
@@ -2293,14 +2884,14 @@ class ARSYSDock(QMainWindow):
         self._home_extent = {}
         self._zoom_windows = {}
         self._legend_layer = None
-        self.ui_theme = 'dark'
+        self.ui_theme = "dark"
         self._theme_shown = False
         _set_ui_theme(self.ui_theme)
         self._watch_legend_layer()
 
-        self.setWindowTitle('ARSYSplotQGIS')
-        self.setObjectName('ARSYSplotQGISWindow')
-        self.setWindowIcon(QIcon(os.path.join(PLUGIN_DIR, 'ArcheIcon.png')))
+        self.setWindowTitle("ARSYSplotQGIS")
+        self.setObjectName("ARSYSplotQGISWindow")
+        self.setWindowIcon(QIcon(os.path.join(PLUGIN_DIR, "ArcheIcon.png")))
         self.setWindowFlag(Qt.WindowType.Window, True)
         self.resize(1280, 840)
         self.setMinimumSize(720, 520)
@@ -2320,7 +2911,7 @@ class ARSYSDock(QMainWindow):
 
     def closeEvent(self, event):
         if self._force_close:
-            for win in list(getattr(self, '_zoom_windows', {}).values()):
+            for win in list(getattr(self, "_zoom_windows", {}).values()):
                 with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                     win._force_close = True
                     win.close()
@@ -2342,106 +2933,107 @@ class ARSYSDock(QMainWindow):
     def show_help(self):
         """In-app help modal (bundled index.html)."""
         from .help_dialog import show_help_dialog
+
         show_help_dialog(self)
 
     def _on_theme_toggled(self, checked):
-        self.ui_theme = 'dark' if checked else 'light'
+        self.ui_theme = "dark" if checked else "light"
         self._apply_ui_theme()
 
     def _root_stylesheet(self):
         t = UI_THEME
-        spin_up = os.path.join(PLUGIN_DIR, 'spin_up.svg').replace('\\', '/')
-        spin_down = os.path.join(PLUGIN_DIR, 'spin_down.svg').replace('\\', '/')
+        spin_up = os.path.join(PLUGIN_DIR, "spin_up.svg").replace("\\", "/")
+        spin_down = os.path.join(PLUGIN_DIR, "spin_down.svg").replace("\\", "/")
         return (
-            'QMainWindow, QWidget { background:%(bg)s; color:%(ink)s; font-size:12px; }'
-            'QPushButton { background:%(btn)s; color:%(ink)s;'
-            '  border:1px solid %(btn_border)s; border-radius:6px; padding:4px 8px; }'
-            'QPushButton:hover { background:%(btn_hover)s; }'
-            'QPushButton:disabled { color:%(disabled)s; }'
-            'QLineEdit, QAbstractSpinBox, QSpinBox, QDoubleSpinBox, QComboBox {'
-            '  background:%(btn)s; color:%(ink)s;'
-            '  border:1px solid %(btn_border)s; padding:2px 4px;'
-            '  selection-background-color:%(accent)s; selection-color:#fff8ee; }'
-            'QAbstractSpinBox { padding:2px 18px 2px 4px; }'
-            'QAbstractSpinBox QLineEdit, QSpinBox QLineEdit, QDoubleSpinBox QLineEdit {'
-            '  background:%(btn)s; color:%(ink)s; border:none; }'
-            'QComboBox QAbstractItemView { background:%(btn)s; color:%(ink)s;'
-            '  selection-background-color:%(accent)s; }'
-            'QDoubleSpinBox::up-button, QSpinBox::up-button,'
-            'QDoubleSpinBox::down-button, QSpinBox::down-button {'
-            '  subcontrol-origin: border; width:16px; background:%(spin_btn)s;'
-            '  border:none; }'
-            'QDoubleSpinBox::up-button, QSpinBox::up-button {'
-            '  subcontrol-position: top right; }'
-            'QDoubleSpinBox::down-button, QSpinBox::down-button {'
-            '  subcontrol-position: bottom right; }'
-            'QDoubleSpinBox::up-button:hover, QSpinBox::up-button:hover,'
-            'QDoubleSpinBox::down-button:hover, QSpinBox::down-button:hover {'
-            '  background:%(accent)s; }'
-            'QDoubleSpinBox::up-arrow, QSpinBox::up-arrow {'
+            "QMainWindow, QWidget { background:%(bg)s; color:%(ink)s; font-size:12px; }"
+            "QPushButton { background:%(btn)s; color:%(ink)s;"
+            "  border:1px solid %(btn_border)s; border-radius:6px; padding:4px 8px; }"
+            "QPushButton:hover { background:%(btn_hover)s; }"
+            "QPushButton:disabled { color:%(disabled)s; }"
+            "QLineEdit, QAbstractSpinBox, QSpinBox, QDoubleSpinBox, QComboBox {"
+            "  background:%(btn)s; color:%(ink)s;"
+            "  border:1px solid %(btn_border)s; padding:2px 4px;"
+            "  selection-background-color:%(accent)s; selection-color:#fff8ee; }"
+            "QAbstractSpinBox { padding:2px 18px 2px 4px; }"
+            "QAbstractSpinBox QLineEdit, QSpinBox QLineEdit, QDoubleSpinBox QLineEdit {"
+            "  background:%(btn)s; color:%(ink)s; border:none; }"
+            "QComboBox QAbstractItemView { background:%(btn)s; color:%(ink)s;"
+            "  selection-background-color:%(accent)s; }"
+            "QDoubleSpinBox::up-button, QSpinBox::up-button,"
+            "QDoubleSpinBox::down-button, QSpinBox::down-button {"
+            "  subcontrol-origin: border; width:16px; background:%(spin_btn)s;"
+            "  border:none; }"
+            "QDoubleSpinBox::up-button, QSpinBox::up-button {"
+            "  subcontrol-position: top right; }"
+            "QDoubleSpinBox::down-button, QSpinBox::down-button {"
+            "  subcontrol-position: bottom right; }"
+            "QDoubleSpinBox::up-button:hover, QSpinBox::up-button:hover,"
+            "QDoubleSpinBox::down-button:hover, QSpinBox::down-button:hover {"
+            "  background:%(accent)s; }"
+            "QDoubleSpinBox::up-arrow, QSpinBox::up-arrow {"
             '  image: url("%(spin_up)s"); width:8px; height:5px; }'
-            'QDoubleSpinBox::down-arrow, QSpinBox::down-arrow {'
+            "QDoubleSpinBox::down-arrow, QSpinBox::down-arrow {"
             '  image: url("%(spin_down)s"); width:8px; height:5px; }'
-            'QPushButton:checked { background:%(accent)s; border-color:%(accent_border)s; }'
-            'QGroupBox { border:1px solid %(group_border)s; border-radius:6px;'
-            '  margin-top:10px; background:%(bg)s; }'
-            'QGroupBox::title { subcontrol-origin: margin; left:8px; padding:0 4px; }'
-            'QTabWidget { background:%(bg)s; border:none; }'
-            'QTabWidget::pane { border:1px solid %(group_border)s;'
-            '  border-top:1px solid %(group_border)s;'
-            '  border-radius:0 0 4px 4px; top:-1px; background:%(bg)s;'
-            '  padding:0; margin:0; }'
+            "QPushButton:checked { background:%(accent)s; border-color:%(accent_border)s; }"
+            "QGroupBox { border:1px solid %(group_border)s; border-radius:6px;"
+            "  margin-top:10px; background:%(bg)s; }"
+            "QGroupBox::title { subcontrol-origin: margin; left:8px; padding:0 4px; }"
+            "QTabWidget { background:%(bg)s; border:none; }"
+            "QTabWidget::pane { border:1px solid %(group_border)s;"
+            "  border-top:1px solid %(group_border)s;"
+            "  border-radius:0 0 4px 4px; top:-1px; background:%(bg)s;"
+            "  padding:0; margin:0; }"
             # Native QTabBar base line is often white under QGIS — suppress it.
-            'QTabBar { background:%(bg)s; border:none; }'
+            "QTabBar { background:%(bg)s; border:none; }"
             # Tight tabs (no expanding / fat padding) so General·Density·Find·Profile fit.
-            'QTabBar::tab { background:%(btn)s; color:%(ink)s;'
-            '  border:1px solid %(btn_border)s; border-bottom:none;'
-            '  border-top-left-radius:4px; border-top-right-radius:4px;'
-            '  padding:3px 5px; margin-right:1px; margin-bottom:0;'
-            '  min-width:0; }'
-            'QTabBar::tab:selected { background:%(accent)s; color:#fff8ee;'
-            '  border:1px solid %(accent_border)s; border-bottom:1px solid %(accent)s;'
-            '  margin-bottom:-1px; padding-bottom:4px; }'
-            'QTabBar::tab:hover:!selected { background:%(btn_hover)s; }'
-            'QScrollArea { border: none; background:%(bg)s; }'
-            'QScrollBar:vertical {'
-            '  background:transparent; width:8px; margin:2px 1px 2px 0; }'
-            'QScrollBar:horizontal {'
-            '  background:transparent; height:8px; margin:0 2px 1px 2px; }'
-            'QScrollBar::handle:vertical, QScrollBar::handle:horizontal {'
-            '  background:%(btn_border)s; border-radius:4px; min-height:20px; min-width:20px; }'
-            'QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {'
-            '  background:%(accent)s; }'
-            'QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,'
-            'QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {'
-            '  width:0; height:0; border:none; background:none; }'
-            'QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical,'
-            'QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {'
-            '  background:transparent; }'
-            'QTableWidget#arsysFindTable {'
-            '  background:%(btn)s; color:%(ink)s;'
-            '  alternate-background-color:%(panel)s;'
-            '  border:1px solid %(btn_border)s; gridline-color:%(btn_border)s;'
-            '  selection-background-color:%(accent)s; selection-color:#fff8ee;'
-            '  font-size:11px; }'
-            'QTableWidget#arsysFindTable::item {'
-            '  padding:2px 5px; color:%(ink)s; background:%(btn)s; }'
-            'QTableWidget#arsysFindTable::item:alternate {'
-            '  background:%(panel)s; color:%(ink)s; }'
-            'QTableWidget#arsysFindTable::item:selected {'
-            '  background:%(accent)s; color:#fff8ee; }'
-            'QTableWidget#arsysFindTable QHeaderView::section {'
-            '  background:%(panel)s; color:%(ink)s;'
-            '  border:none; border-right:1px solid %(btn_border)s;'
-            '  border-bottom:1px solid %(btn_border)s; padding:3px 5px;'
-            '  font-size:10px; font-weight:600; }'
-            'QSlider { background:transparent; }'
-            'QSlider::groove:horizontal { background:%(groove)s; height:6px;'
-            '  border-radius:3px; }'
-            'QSlider::handle:horizontal { background:%(accent)s; width:12px;'
-            '  margin:-4px 0; border-radius:6px; }'
-            'QSlider::groove:horizontal:disabled { background:%(groove)s; }'
-            'QSlider::handle:horizontal:disabled { background:%(disabled)s; }'
+            "QTabBar::tab { background:%(btn)s; color:%(ink)s;"
+            "  border:1px solid %(btn_border)s; border-bottom:none;"
+            "  border-top-left-radius:4px; border-top-right-radius:4px;"
+            "  padding:3px 5px; margin-right:1px; margin-bottom:0;"
+            "  min-width:0; }"
+            "QTabBar::tab:selected { background:%(accent)s; color:#fff8ee;"
+            "  border:1px solid %(accent_border)s; border-bottom:1px solid %(accent)s;"
+            "  margin-bottom:-1px; padding-bottom:4px; }"
+            "QTabBar::tab:hover:!selected { background:%(btn_hover)s; }"
+            "QScrollArea { border: none; background:%(bg)s; }"
+            "QScrollBar:vertical {"
+            "  background:transparent; width:8px; margin:2px 1px 2px 0; }"
+            "QScrollBar:horizontal {"
+            "  background:transparent; height:8px; margin:0 2px 1px 2px; }"
+            "QScrollBar::handle:vertical, QScrollBar::handle:horizontal {"
+            "  background:%(btn_border)s; border-radius:4px; min-height:20px; min-width:20px; }"
+            "QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {"
+            "  background:%(accent)s; }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,"
+            "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {"
+            "  width:0; height:0; border:none; background:none; }"
+            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical,"
+            "QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {"
+            "  background:transparent; }"
+            "QTableWidget#arsysFindTable {"
+            "  background:%(btn)s; color:%(ink)s;"
+            "  alternate-background-color:%(panel)s;"
+            "  border:1px solid %(btn_border)s; gridline-color:%(btn_border)s;"
+            "  selection-background-color:%(accent)s; selection-color:#fff8ee;"
+            "  font-size:11px; }"
+            "QTableWidget#arsysFindTable::item {"
+            "  padding:2px 5px; color:%(ink)s; background:%(btn)s; }"
+            "QTableWidget#arsysFindTable::item:alternate {"
+            "  background:%(panel)s; color:%(ink)s; }"
+            "QTableWidget#arsysFindTable::item:selected {"
+            "  background:%(accent)s; color:#fff8ee; }"
+            "QTableWidget#arsysFindTable QHeaderView::section {"
+            "  background:%(panel)s; color:%(ink)s;"
+            "  border:none; border-right:1px solid %(btn_border)s;"
+            "  border-bottom:1px solid %(btn_border)s; padding:3px 5px;"
+            "  font-size:10px; font-weight:600; }"
+            "QSlider { background:transparent; }"
+            "QSlider::groove:horizontal { background:%(groove)s; height:6px;"
+            "  border-radius:3px; }"
+            "QSlider::handle:horizontal { background:%(accent)s; width:12px;"
+            "  margin:-4px 0; border-radius:6px; }"
+            "QSlider::groove:horizontal:disabled { background:%(groove)s; }"
+            "QSlider::handle:horizontal:disabled { background:%(disabled)s; }"
             + TOOLTIP_CSS
         ) % dict(t, spin_up=spin_up, spin_down=spin_down)
 
@@ -2449,14 +3041,22 @@ class ARSYSDock(QMainWindow):
         """Palette + local sheets so QGIS does not leave white Base on first show."""
         pal = _theme_palette()
         self.setPalette(pal)
-        if getattr(self, '_root', None) is not None:
+        if getattr(self, "_root", None) is not None:
             self._root.setPalette(pal)
         line_css = _spin_line_css()
         for widget in self.findChildren(QWidget):
-            if isinstance(widget, (
-                QAbstractSpinBox, QSpinBox, QDoubleSpinBox, QComboBox, QSlider,
-                QTableWidget, QScrollArea,
-            )):
+            if isinstance(
+                widget,
+                (
+                    QAbstractSpinBox,
+                    QSpinBox,
+                    QDoubleSpinBox,
+                    QComboBox,
+                    QSlider,
+                    QTableWidget,
+                    QScrollArea,
+                ),
+            ):
                 with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                     widget.setPalette(pal)
                     widget.setAutoFillBackground(True)
@@ -2472,7 +3072,7 @@ class ARSYSDock(QMainWindow):
                         vp.setPalette(pal)
                         vp.setAutoFillBackground(True)
             if isinstance(widget, QAbstractSpinBox):
-                if widget.objectName() == 'arsysClipSpin':
+                if widget.objectName() == "arsysClipSpin":
                     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                         widget.setStyleSheet(_clip_spin_css())
                         _fit_clip_spin_width(widget)
@@ -2489,101 +3089,105 @@ class ARSYSDock(QMainWindow):
         COMPACT_BTN_CSS = compact_btn_css()
         sheet = self._root_stylesheet()
         self.setStyleSheet(sheet)
-        if getattr(self, '_root', None) is not None:
+        if getattr(self, "_root", None) is not None:
             self._root.setStyleSheet(sheet)
         self._style_editable_controls()
-        if getattr(self, '_lab_load', None) is not None:
+        if getattr(self, "_lab_load", None) is not None:
             self._lab_load.setStyleSheet(
-                '#arsysLoadDataLabel { color:%s; background:transparent; border:none;'
-                '  padding:0; margin:0; }' % UI_THEME['ink']
+                "#arsysLoadDataLabel { color:%s; background:transparent; border:none;"
+                "  padding:0; margin:0; }" % UI_THEME["ink"]
             )
-        if getattr(self, 'lbl_profile_status', None) is not None:
+        if getattr(self, "lbl_profile_status", None) is not None:
             self.lbl_profile_status.setStyleSheet(
-                'color:%s;' % UI_THEME.get('muted', '#8a8178')
+                "color:%s;" % UI_THEME.get("muted", "#8a8178")
             )
         css = compact_btn_css()
-        ink = UI_THEME.get('ink', '#fff5e6')
+        ink = UI_THEME.get("ink", "#fff5e6")
         for btn in (
-            getattr(self, 'btn_dens_auto', None),
-            getattr(self, 'btn_dens_cut', None),
-            getattr(self, 'btn_dens_heat', None),
-            getattr(self, 'btn_dens_iso', None),
-            getattr(self, 'btn_dens_both', None),
-            getattr(self, 'btn_dens_cloud', None),
-            getattr(self, 'btn_dens_bands', None),
-            getattr(self, 'btn_draw_points', None),
-            getattr(self, 'btn_draw_vectors', None),
-            getattr(self, 'btn_draw_both', None),
-            getattr(self, 'btn_draw_none', None),
-            getattr(self, 'btn_help', None),
-            getattr(self, 'btn_import', None),
-            getattr(self, 'btn_sample', None),
-            getattr(self, 'btn_use', None),
-            getattr(self, 'btn_to_qgis', None),
-            getattr(self, 'btn_profile_csv', None),
-            getattr(self, 'btn_profile_to_qgis', None),
-            getattr(self, 'btn_all', None),
-            getattr(self, 'btn_none', None),
-            getattr(self, 'btn_reset', None),
-            getattr(self, 'btn_redraw', None),
-            getattr(self, 'btn_z_stretch_reset', None),
-            getattr(self, 'btn_3d', None),
+            getattr(self, "btn_dens_auto", None),
+            getattr(self, "btn_dens_cut", None),
+            getattr(self, "btn_dens_heat", None),
+            getattr(self, "btn_dens_iso", None),
+            getattr(self, "btn_dens_both", None),
+            getattr(self, "btn_dens_cloud", None),
+            getattr(self, "btn_dens_bands", None),
+            getattr(self, "btn_draw_points", None),
+            getattr(self, "btn_draw_vectors", None),
+            getattr(self, "btn_draw_both", None),
+            getattr(self, "btn_draw_none", None),
+            getattr(self, "btn_help", None),
+            getattr(self, "btn_import", None),
+            getattr(self, "btn_sample", None),
+            getattr(self, "btn_use", None),
+            getattr(self, "btn_to_qgis", None),
+            getattr(self, "btn_profile_csv", None),
+            getattr(self, "btn_profile_to_qgis", None),
+            getattr(self, "btn_all", None),
+            getattr(self, "btn_none", None),
+            getattr(self, "btn_reset", None),
+            getattr(self, "btn_redraw", None),
+            getattr(self, "btn_z_stretch_reset", None),
+            getattr(self, "btn_3d", None),
+            getattr(self, "btn_measure", None),
+            getattr(self, "btn_recalc_angles", None),
         ):
             if btn is not None:
                 with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                     btn.setStyleSheet(css)
-                name = getattr(btn, '_arsys_icon', None)
+                name = getattr(btn, "_arsys_icon", None)
                 if name:
                     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                         sz = btn.iconSize().width() or 18
                         btn.setIcon(_themed_icon(name, ink, sz))
         for pane in (
-            getattr(self, 'plan', None),
-            getattr(self, 'longp', None),
-            getattr(self, 'transp', None),
+            getattr(self, "plan", None),
+            getattr(self, "longp", None),
+            getattr(self, "transp", None),
         ):
             if pane is not None:
                 pane.apply_theme()
-        if getattr(self, '_filters_panel', None) is not None:
+        if getattr(self, "_filters_panel", None) is not None:
             t = UI_THEME
             self._filters_panel.setStyleSheet(
-                'background:%s; %s' % (t['panel'], TOOLTIP_CSS)
+                "background:%s; %s" % (t["panel"], TOOLTIP_CSS)
             )
-            self._filters_lab.setStyleSheet('color:%s;' % t['muted'])
-        if getattr(self, '_dens_scale', None) is not None:
+            self._filters_lab.setStyleSheet("color:%s;" % t["muted"])
+            self._style_coord_labels()
+        if getattr(self, "_dens_scale", None) is not None:
             self._dens_scale.setStyleSheet(TOOLTIP_CSS)
             self._dens_scale.update()
         for rng in (
-            getattr(self, 'rng_x', None),
-            getattr(self, 'rng_y', None),
-            getattr(self, 'rng_z', None),
+            getattr(self, "rng_x", None),
+            getattr(self, "rng_y", None),
+            getattr(self, "rng_z", None),
         ):
             if rng is not None:
                 rng.apply_theme()
         # Filter group uses the global QGroupBox sheet from _root_stylesheet.
-        for win in list(getattr(self, '_zoom_windows', {}).values()):
+        for win in list(getattr(self, "_zoom_windows", {}).values()):
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 win.apply_theme()
         for sw in (
-            getattr(self, 'chk_dark', None),
-            getattr(self, 'chk_adaptive', None),
-            getattr(self, 'chk_z_stretch', None),
-            getattr(self, 'chk_cross_hover', None),
-            getattr(self, 'chk_point_info', None),
-            getattr(self, 'chk_point_info_large', None),
-            getattr(self, 'chk_axis_grid', None),
-            getattr(self, 'chk_square_grid', None),
-            getattr(self, 'chk_find_or', None),
-            getattr(self, 'chk_dens_labels', None),
-            getattr(self, 'chk_dens_invert', None),
+            getattr(self, "chk_dark", None),
+            getattr(self, "chk_adaptive", None),
+            getattr(self, "chk_z_stretch", None),
+            getattr(self, "chk_cross_hover", None),
+            getattr(self, "chk_vector_fixed", None),
+            getattr(self, "chk_point_info", None),
+            getattr(self, "chk_point_info_large", None),
+            getattr(self, "chk_axis_grid", None),
+            getattr(self, "chk_square_grid", None),
+            getattr(self, "chk_find_or", None),
+            getattr(self, "chk_dens_labels", None),
+            getattr(self, "chk_dens_invert", None),
         ):
             if sw is not None:
                 sw.update()
-        if getattr(self, '_point_info_card', None) is not None:
+        if getattr(self, "_point_info_card", None) is not None:
             self._point_info_card.apply_theme()
         self._style_find_table()
         self._style_find_detail()
-        tabs = getattr(self, 'opt_tabs', None)
+        tabs = getattr(self, "opt_tabs", None)
         if tabs is not None:
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 pal = _theme_palette()
@@ -2595,19 +3199,26 @@ class ARSYSDock(QMainWindow):
                     bar.setPalette(pal)
                     bar.setAutoFillBackground(True)
         # Isolines follow canvas chrome: dark → white, light → black.
-        if getattr(self, 'density_on', False) and getattr(self, '_density', None):
-            with_heat = self.density_mode in ('heatmap', 'both')
-            mm = self._isoline_width() if hasattr(self, '_isoline_width') else 0.15
+        if getattr(self, "density_on", False) and getattr(self, "_density", None):
+            with_heat = self.density_mode in ("heatmap", "both")
+            mm = self._isoline_width() if hasattr(self, "_isoline_width") else 0.15
             for pair in self._density.values():
                 _rst, ctr = D.split_pair(pair)
                 if ctr is not None:
                     D.style_contours(
-                        ctr, with_heatmap=with_heat,
-                        scheme=self._density_scheme() if hasattr(self, '_density_scheme') else 'archeo',
-                        labels=self._density_labels_on() if hasattr(self, '_density_labels_on') else False,
+                        ctr,
+                        with_heatmap=with_heat,
+                        scheme=self._density_scheme()
+                        if hasattr(self, "_density_scheme")
+                        else "archeo",
+                        labels=self._density_labels_on()
+                        if hasattr(self, "_density_labels_on")
+                        else False,
                         width=mm,
-                        invert=self._density_invert() if hasattr(self, '_density_invert') else False,
-                        theme_name=UI_THEME.get('name'),
+                        invert=self._density_invert()
+                        if hasattr(self, "_density_invert")
+                        else False,
+                        theme_name=UI_THEME.get("name"),
                     )
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 self.plan.canvas.refresh()
@@ -2617,75 +3228,81 @@ class ARSYSDock(QMainWindow):
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             view3d.apply_open_theme(self.iface, self.ui_theme)
         tip = tooltip_palette()
-        _retint_html_tooltips(self, tip['ink'], tip['bg'])
-        if getattr(self, '_root', None) is not None:
-            _retint_html_tooltips(self._root, tip['ink'], tip['bg'])
+        _retint_html_tooltips(self, tip["ink"], tip["bg"])
+        if getattr(self, "_root", None) is not None:
+            _retint_html_tooltips(self._root, tip["ink"], tip["bg"])
         # Pane / zoom / Resources keep local sheets — refresh tip colours there too.
         for pane in (
-            getattr(self, 'plan', None),
-            getattr(self, 'longp', None),
-            getattr(self, 'transp', None),
+            getattr(self, "plan", None),
+            getattr(self, "longp", None),
+            getattr(self, "transp", None),
         ):
             if pane is not None:
-                _retint_html_tooltips(pane, tip['ink'], tip['bg'])
-        for win in list(getattr(self, '_zoom_windows', {}).values()):
+                _retint_html_tooltips(pane, tip["ink"], tip["bg"])
+        for win in list(getattr(self, "_zoom_windows", {}).values()):
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-                _retint_html_tooltips(win, tip['ink'], tip['bg'])
+                _retint_html_tooltips(win, tip["ink"], tip["bg"])
         for rng in (
-            getattr(self, 'rng_x', None),
-            getattr(self, 'rng_y', None),
-            getattr(self, 'rng_z', None),
+            getattr(self, "rng_x", None),
+            getattr(self, "rng_y", None),
+            getattr(self, "rng_z", None),
         ):
             if rng is not None:
-                _retint_html_tooltips(rng, tip['ink'], tip['bg'])
-        if getattr(self, '_dens_scale', None) is not None:
-            _retint_html_tooltips(self._dens_scale, tip['ink'], tip['bg'])
-        if getattr(self, '_filters_panel', None) is not None:
-            _retint_html_tooltips(self._filters_panel, tip['ink'], tip['bg'])
+                _retint_html_tooltips(rng, tip["ink"], tip["bg"])
+        if getattr(self, "_dens_scale", None) is not None:
+            _retint_html_tooltips(self._dens_scale, tip["ink"], tip["bg"])
+        if getattr(self, "_filters_panel", None) is not None:
+            _retint_html_tooltips(self._filters_panel, tip["ink"], tip["bg"])
+        # Theme / stylesheet can change QGroupBox sizeHint — re-align the row.
+        QTimer.singleShot(0, self._sync_resources_tool_row)
 
     def _make_side(self):
         side = QWidget()
-        side.setObjectName('arsysSide')
+        side.setObjectName("arsysSide")
         side.setMinimumWidth(260)
         side.setMaximumWidth(360)
         self._side = side
         col = QVBoxLayout(side)
         title_row = QHBoxLayout()
         title_row.setSpacing(6)
-        self._title_lab = QLabel('ARSYSplot<strong>QGIS</strong>')
+        self._title_lab = QLabel("ARSYSplot<strong>QGIS</strong>")
         self._title_lab.setTextFormat(Qt.TextFormat.RichText)
-        self._title_lab.setStyleSheet('font-size:16px;')
+        self._title_lab.setStyleSheet("font-size:16px;")
         title_row.addWidget(self._title_lab, 1)
-        self.btn_help = QPushButton('?')
+        self.btn_help = QPushButton("?")
         self.btn_help.setFixedSize(22, 22)
         self.btn_help.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_help.setToolTip(L.html_tooltip(
-            '**Help** — how to use the plugin.',
-            'Same guide as Help → Plugins → ARSYSplotQGIS.',
-        ))
+        self.btn_help.setToolTip(
+            L.html_tooltip(
+                "**Help** — how to use the plugin.",
+                "Same guide as Help → Plugins → ARSYSplotQGIS.",
+            )
+        )
         self.btn_help.setStyleSheet(compact_btn_css())
         self.btn_help.clicked.connect(self.show_help)
         title_row.addWidget(self.btn_help)
-        self.chk_dark = ToggleSwitch('Dark')
+        self.chk_dark = ToggleSwitch("Dark")
         self.chk_dark.setChecked(True)
-        self.chk_dark.setToolTip(L.html_tooltip(
-            '**Dark / Light** workspace chrome, canvases and axes.',
-            'Export PNG stays on a white paper background.',
-        ))
+        self.chk_dark.setToolTip(
+            L.html_tooltip(
+                "**Dark / Light** workspace chrome, canvases and axes.",
+                "Export PNG stays on a white paper background.",
+            )
+        )
         self.chk_dark.toggled.connect(self._on_theme_toggled)
         title_row.addWidget(self.chk_dark)
         col.addLayout(title_row)
 
-        self.lbl_file = QLabel('No layer')
-        self.lbl_count = QLabel('0 / 0 points')
+        self.lbl_file = QLabel("No layer")
+        self.lbl_count = QLabel("0 / 0 points")
         col.addWidget(self.lbl_file)
         col.addWidget(self.lbl_count)
 
         src_row = QHBoxLayout()
         src_row.setSpacing(4)
         src_row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-        self._lab_load = QLabel('Load\nData')
-        self._lab_load.setObjectName('arsysLoadDataLabel')
+        self._lab_load = QLabel("Load\nData")
+        self._lab_load.setObjectName("arsysLoadDataLabel")
         self._lab_load.setAlignment(Qt.AlignmentFlag.AlignCenter)
         font = QFont()
         font.setPixelSize(12)
@@ -2694,28 +3311,27 @@ class ARSYSDock(QMainWindow):
         self._lab_load.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         fm = self._lab_load.fontMetrics()
         try:
-            text_w = max(fm.horizontalAdvance('Load'), fm.horizontalAdvance('Data'))
+            text_w = max(fm.horizontalAdvance("Load"), fm.horizontalAdvance("Data"))
         except AttributeError:
-            text_w = max(fm.width('Load'), fm.width('Data'))
+            text_w = max(fm.width("Load"), fm.width("Data"))
         src_h = max(fm.lineSpacing() * 2 + 4, 34)
         self._lab_load.setFixedSize(QSize(text_w + 6, src_h))
         src_row.addWidget(self._lab_load)
         self.btn_import = _source_icon_button(
-            'import.svg',
-            'Import **CSV** or spreadsheet (**xlsx / ods / xls** via QGIS OGR). '
-            'Map P1, P2, P3 and Group.',
+            "import.svg",
+            "Import **CSV** or spreadsheet (**xlsx / ods / xls**) ",
             src_h,
         )
         self.btn_import.clicked.connect(self.import_csv)
         self.btn_sample = _source_icon_button(
-            'sample.svg',
-            'Load bundled **sample.csv**. No file to browse.',
+            "sample.svg",
+            "Load a sample dataset",
             src_h,
         )
         self.btn_sample.clicked.connect(self.load_sample)
         self.btn_use = _source_icon_button(
-            'layer.svg',
-            'Use the selected QGIS **point layer**. Copies attributes, colours, size.',
+            "layer.svg",
+            "Use the selected QGIS **point layer**. Copies attributes, colours, size",
             src_h,
         )
         self.btn_use.clicked.connect(self.use_selected_layer)
@@ -2724,27 +3340,30 @@ class ARSYSDock(QMainWindow):
         src_row.addWidget(self.btn_use, 1)
         col.addLayout(src_row)
 
-        gbox = QGroupBox('Group')
+        gbox = QGroupBox("Group")
         gcol = QVBoxLayout(gbox)
         self.cmb_group = QComboBox()
-        self.cmb_group.setToolTip(L.html_tooltip(
-            '**Field** used to colour and filter objects.',
-            'Typical: group, material, level.',
-        ))
+        self.cmb_group.setToolTip(
+            L.html_tooltip(
+                "**Field** used to colour and filter objects",
+            )
+        )
         self.cmb_group.currentTextChanged.connect(self._on_group_field)
         row = QHBoxLayout()
-        self.btn_all = QPushButton('All')
-        self.btn_none = QPushButton('None')
-        self.btn_all.setToolTip(L.html_tooltip('Show **every** group.'))
-        self.btn_none.setToolTip(L.html_tooltip('Hide **every** group.'))
+        self.btn_all = QPushButton("All")
+        self.btn_none = QPushButton("None")
+        self.btn_all.setToolTip(L.html_tooltip("Show **every** group."))
+        self.btn_none.setToolTip(L.html_tooltip("Hide **every** group."))
         self.btn_all.clicked.connect(lambda: self._set_all_groups(True))
         self.btn_none.clicked.connect(lambda: self._set_all_groups(False))
         row.addWidget(self.btn_all)
         row.addWidget(self.btn_none)
         self.group_wrap = FlowHost()
-        self.group_layout = FlowLayout(self.group_wrap, margin=0, h_spacing=3, v_spacing=2)
+        self.group_layout = FlowLayout(
+            self.group_wrap, margin=0, h_spacing=3, v_spacing=2
+        )
         scroll = QScrollArea()
-        scroll.setObjectName('arsysGroupScroll')
+        scroll.setObjectName("arsysGroupScroll")
         scroll.setWidgetResizable(True)
         scroll.setWidget(self.group_wrap)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -2755,41 +3374,42 @@ class ARSYSDock(QMainWindow):
         scroll.setMaximumHeight(220)
         self._group_scroll = scroll
         self._group_box = gbox
-        gcol.addWidget(QLabel('Field'))
+        gcol.addWidget(QLabel("Field"))
         gcol.addWidget(self.cmb_group)
         gcol.addLayout(row)
         style_row = QHBoxLayout()
         style_row.setSpacing(4)
-        self.btn_style = QPushButton('Load style…')
-        self.btn_style.setToolTip(L.html_tooltip(
-            'Load a **personal style** text file: colours and Point models',
-            'per group value. Sections match **Field** names; a flat list',
-            'applies to the active field. See **sample_style.txt**.',
-        ))
+        self.btn_style = QPushButton("Load colours…")
+        self.btn_style.setToolTip(
+            L.html_tooltip(
+                "Load a **.colors** file.",
+                "See help for **.colors** file format",
+            )
+        )
         self.btn_style.clicked.connect(self.load_style_file)
-        self.btn_style_clear = QPushButton('Clear')
-        self.btn_style_clear.setToolTip(L.html_tooltip(
-            'Drop the loaded style book and restore auto / layer colours',
-            'with the current Point model.',
-        ))
+        self.btn_style_clear = QPushButton("Clear")
+        self.btn_style_clear.setToolTip(
+            L.html_tooltip(
+                "Drop the loaded **``.colors``** book and restore auto / layer colours",
+                "with the current Point model.",
+            )
+        )
         self.btn_style_clear.clicked.connect(self.clear_style_file)
         self.btn_style_clear.setEnabled(False)
         style_row.addWidget(self.btn_style, 1)
         style_row.addWidget(self.btn_style_clear)
         gcol.addLayout(style_row)
         gcol.addWidget(scroll, 0)
-        gbox.setSizePolicy(
-            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum
-        )
+        gbox.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         # Group = content-sized; Options gets the leftover vertical space.
         col.addWidget(gbox, 0)
 
-        opt = QGroupBox('Options')
+        opt = QGroupBox("Options")
         ocol = QVBoxLayout(opt)
         ocol.setContentsMargins(6, 10, 6, 6)
         ocol.setSpacing(6)
         self.opt_tabs = QTabWidget()
-        self.opt_tabs.setObjectName('arsysOptTabs')
+        self.opt_tabs.setObjectName("arsysOptTabs")
         # Document mode + QGIS palette paints a bright base line under the tabs.
         self.opt_tabs.setDocumentMode(False)
         self.opt_tabs.setTabPosition(QTabWidget.TabPosition.North)
@@ -2804,49 +3424,170 @@ class ARSYSDock(QMainWindow):
         gopt = QVBoxLayout(gen_page)
         gopt.setContentsMargins(6, 8, 6, 6)
         gopt.setSpacing(6)
-        self.chk_adaptive = ToggleSwitch('Adaptive frame')
-        self.chk_adaptive.setToolTip(L.html_tooltip(
-            '**On:** zoom axes to the filtered cloud.',
-            '**Off:** restore the original full-data axis frame.',
-        ))
-        self.chk_adaptive.toggled.connect(self._on_adaptive_toggled)
-        gopt.addWidget(self.chk_adaptive)
+
+        def _gen_group(title):
+            box = QGroupBox(title)
+            lay = QVBoxLayout(box)
+            lay.setContentsMargins(6, 10, 6, 6)
+            lay.setSpacing(5)
+            return box, lay
+
+        def _switch_row(caption, switch):
+            wrap = QWidget()
+            row = QHBoxLayout(wrap)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(6)
+            lab = QLabel(caption)
+            lab.setStyleSheet("font-size:12px;")
+            row.addWidget(lab, 0, Qt.AlignmentFlag.AlignVCenter)
+            row.addWidget(switch, 0, Qt.AlignmentFlag.AlignVCenter)
+            row.addStretch(1)
+            return wrap
+
+        # Draw first (mode for points / vectors / both / none).
+        draw_row = QHBoxLayout()
+        draw_row.setSpacing(3)
+        draw_row.addWidget(QLabel("Draw"))
+        self.btn_draw_points = QPushButton("Points")
+        self.btn_draw_vectors = QPushButton("Vectors")
+        self.btn_draw_both = QPushButton("Both")
+        self.btn_draw_none = QPushButton("None")
+        self._draw_group = QButtonGroup(self)
+        self._draw_group.setExclusive(True)
+        for btn in (
+            self.btn_draw_points,
+            self.btn_draw_vectors,
+            self.btn_draw_both,
+            self.btn_draw_none,
+        ):
+            btn.setCheckable(True)
+            btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            btn.setStyleSheet(compact_btn_css())
+            self._draw_group.addButton(btn)
+        self.btn_draw_points.setChecked(True)
+        self.btn_draw_points.setToolTip(
+            L.html_tooltip(
+                "**P1:** object centre.",
+            )
+        )
+        self.btn_draw_vectors.setToolTip(
+            L.html_tooltip(
+                "**P2→P3** geometric axis after import (legacy P1→P2 if P3 missing).",
+                "Arrow **sense** uses the improved method: adaptive flip from "
+                "inclination when Δz points up and |Δz|/L is significant.",
+            )
+        )
+        self.btn_draw_both.setToolTip(
+            L.html_tooltip(
+                "**Centre** and **axis** of each object.",
+            )
+        )
+        self.btn_draw_none.setToolTip(
+            L.html_tooltip(
+                "**Hide** points and vectors so density is fully visible.",
+            )
+        )
+        self.btn_draw_vectors.setEnabled(False)
+        self.btn_draw_both.setEnabled(False)
+        self.btn_draw_points.clicked.connect(lambda: self._set_draw_mode("points"))
+        self.btn_draw_vectors.clicked.connect(lambda: self._set_draw_mode("vectors"))
+        self.btn_draw_both.clicked.connect(lambda: self._set_draw_mode("both"))
+        self.btn_draw_none.clicked.connect(lambda: self._set_draw_mode("none"))
+        draw_row.addWidget(self.btn_draw_points)
+        draw_row.addWidget(self.btn_draw_vectors)
+        draw_row.addWidget(self.btn_draw_both)
+        draw_row.addWidget(self.btn_draw_none)
+        gopt.addLayout(draw_row)
+
+        # Point: size, model, info cards.
+        point_box, point_lay = _gen_group("Point")
+        size_row = QHBoxLayout()
+        size_row.addWidget(QLabel("Point size"))
+        self.sld_size = QSlider(Qt.Orientation.Horizontal)
+        # 0…1000 → 0.00…10.00 mm (0.01 mm); continuous drag, no tick stops.
+        self.sld_size.setRange(0, 1000)
+        self.sld_size.setSingleStep(1)
+        self.sld_size.setPageStep(10)
+        self.sld_size.setValue(220)
+        self.sld_size.setTracking(True)
+        self.sld_size.setTickPosition(QSlider.TickPosition.NoTicks)
+        size_tip = L.html_tooltip(
+            "Point diameter in **mm** on paper (range **0–10**). "
+            "On screen: **mm → px** using the **DPI** selector beside Point model "
+            "(Auto = 96)",
+        )
+        self.sld_size.setToolTip(size_tip)
+        self.sld_size.valueChanged.connect(self._on_point_size)
+        self.lbl_size = QLabel("2.20 mm")
+        self.lbl_size.setToolTip(size_tip)
+        self.lbl_size.setMinimumWidth(52)
+        size_row.addWidget(self.sld_size, 1)
+        size_row.addWidget(self.lbl_size)
+        point_lay.addLayout(size_row)
         shape_row = QHBoxLayout()
-        shape_row.addWidget(QLabel('Point model'))
+        shape_row.addWidget(QLabel("Model"))
         self.cmb_point_shape = QComboBox()
         for sid, label in L.MARKER_SHAPES:
             self.cmb_point_shape.addItem(label, sid)
         idx = self.cmb_point_shape.findData(L.DEFAULT_MARKER)
         if idx >= 0:
             self.cmb_point_shape.setCurrentIndex(idx)
-        self.cmb_point_shape.setToolTip(L.html_tooltip(
-            '**Point model** — default marker for values without a style shape.',
-            'A loaded style file can set a shape per group value.',
-        ))
+        self.cmb_point_shape.setToolTip(
+            L.html_tooltip(
+                "**Point model** — default marker for values without a .colors shape.",
+                "A loaded .colors file (Load colours…) can set a shape per group value.",
+                "Changing Model does not override shapes already set in that file.",
+            )
+        )
         self.cmb_point_shape.currentIndexChanged.connect(self._on_point_shape)
         shape_row.addWidget(self.cmb_point_shape, 1)
-        gopt.addLayout(shape_row)
-        size_row = QHBoxLayout()
-        size_row.addWidget(QLabel('Point size'))
-        self.sld_size = QSlider(Qt.Orientation.Horizontal)
-        self.sld_size.setRange(0, 40)
-        self.sld_size.setSingleStep(1)
-        self.sld_size.setPageStep(5)
-        self.sld_size.setValue(22)
-        self.sld_size.setTracking(True)
-        size_tip = L.html_tooltip(
-            'Point diameter. Unit: **mm**. Range **0–3**.',
+        shape_row.addWidget(QLabel("DPI"))
+        self.cmb_point_dpi = QComboBox()
+        self.cmb_point_dpi.addItem("Auto", None)
+        for dpi in (12, 18, 24, 36, 48, 72, 96, 120):
+            self.cmb_point_dpi.addItem("%d" % dpi, dpi)
+        self.cmb_point_dpi.setCurrentIndex(0)
+        self.cmb_point_dpi.setMinimumWidth(72)
+        self.cmb_point_dpi.setToolTip(
+            L.html_tooltip(
+                "Screen **mm → px** reference (does not change paper mm).",
+                "**Auto** = 96 DPI (default). Lower DPI → smaller on-screen points.",
+            )
         )
-        self.sld_size.setToolTip(size_tip)
-        self.sld_size.valueChanged.connect(self._on_point_size)
-        self.lbl_size = QLabel('2.2 mm')
-        self.lbl_size.setToolTip(size_tip)
-        self.lbl_size.setMinimumWidth(44)
-        size_row.addWidget(self.sld_size, 1)
-        size_row.addWidget(self.lbl_size)
-        gopt.addLayout(size_row)
+        self.cmb_point_dpi.currentIndexChanged.connect(self._on_point_dpi)
+        shape_row.addWidget(self.cmb_point_dpi)
+        point_lay.addLayout(shape_row)
+        self.chk_point_info = ToggleSwitch("")
+        self.chk_point_info.setChecked(False)
+        self.chk_point_info.setEnabled(False)
+        self.chk_point_info.setToolTip(
+            L.html_tooltip(
+                "Hover a point to show a card with its attributes",
+                "(coordinates, material, quadre, …).",
+            )
+        )
+        self.chk_point_info.toggled.connect(self._on_point_info_toggled)
+        self.chk_point_info_large = ToggleSwitch("")
+        self.chk_point_info_large.setChecked(False)
+        self.chk_point_info_large.setEnabled(False)
+        self.chk_point_info_large.setToolTip(
+            L.html_tooltip(
+                "Show **all** attributes on the Point info card.",
+                "Off: a short preferred list (id, quadre, material, P1, …).",
+            )
+        )
+        self.chk_point_info_large.toggled.connect(self._on_point_info_large_toggled)
+        info_row = QHBoxLayout()
+        info_row.setSpacing(8)
+        info_row.addWidget(_switch_row("Point info", self.chk_point_info), 1)
+        info_row.addWidget(_switch_row("Large info", self.chk_point_info_large), 1)
+        point_lay.addLayout(info_row)
+        gopt.addWidget(point_box)
+
+        # Vector: arrow head + fixed shaft length.
+        vec_box, vec_lay = _gen_group("Vector")
         arrow_row = QHBoxLayout()
-        arrow_row.addWidget(QLabel('Arrow size'))
+        arrow_row.addWidget(QLabel("Arrow size"))
         self.sld_arrow = QSlider(Qt.Orientation.Horizontal)
         self.sld_arrow.setRange(0, L.ARROW_SLIDER_MAX)
         self.sld_arrow.setSingleStep(1)
@@ -2855,134 +3596,144 @@ class ARSYSDock(QMainWindow):
         self.sld_arrow.setTracking(True)
         self.sld_arrow.setEnabled(False)
         arrow_tip = L.html_tooltip(
-            'Arrow-head size. Unit: **mm**. Fine steps at small sizes.',
+            "Arrow-head size. Unit: **mm**. Fine steps at small sizes.",
         )
         self.sld_arrow.setToolTip(arrow_tip)
         self.sld_arrow.valueChanged.connect(self._on_arrow_size)
-        self.lbl_arrow = QLabel('%.2f mm' % L.ARROW_MM_DEFAULT)
+        self.lbl_arrow = QLabel("%.2f mm" % L.ARROW_MM_DEFAULT)
         self.lbl_arrow.setToolTip(arrow_tip)
         self.lbl_arrow.setMinimumWidth(52)
         arrow_row.addWidget(self.sld_arrow, 1)
         arrow_row.addWidget(self.lbl_arrow)
-        gopt.addLayout(arrow_row)
-        draw_row = QHBoxLayout()
-        draw_row.setSpacing(3)
-        draw_row.addWidget(QLabel('Draw'))
-        self.btn_draw_points = QPushButton('Points')
-        self.btn_draw_vectors = QPushButton('Vectors')
-        self.btn_draw_both = QPushButton('Both')
-        self.btn_draw_none = QPushButton('None')
-        self._draw_group = QButtonGroup(self)
-        self._draw_group.setExclusive(True)
-        for btn in (
-            self.btn_draw_points, self.btn_draw_vectors,
-            self.btn_draw_both, self.btn_draw_none,
-        ):
-            btn.setCheckable(True)
-            btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-            btn.setStyleSheet(compact_btn_css())
-            self._draw_group.addButton(btn)
-        self.btn_draw_points.setChecked(True)
-        self.btn_draw_points.setToolTip(L.html_tooltip(
-            '**P1:** object centre.',
-        ))
-        self.btn_draw_vectors.setToolTip(L.html_tooltip(
-            '**P2→P3** after import. If only P1→P2, that axis is used.',
-        ))
-        self.btn_draw_both.setToolTip(L.html_tooltip(
-            '**Centre** and **axis** of each object.',
-        ))
-        self.btn_draw_none.setToolTip(L.html_tooltip(
-            '**Hide** points and vectors so density is fully visible.',
-        ))
-        self.btn_draw_vectors.setEnabled(False)
-        self.btn_draw_both.setEnabled(False)
-        self.btn_draw_points.clicked.connect(lambda: self._set_draw_mode('points'))
-        self.btn_draw_vectors.clicked.connect(lambda: self._set_draw_mode('vectors'))
-        self.btn_draw_both.clicked.connect(lambda: self._set_draw_mode('both'))
-        self.btn_draw_none.clicked.connect(lambda: self._set_draw_mode('none'))
-        draw_row.addWidget(self.btn_draw_points)
-        draw_row.addWidget(self.btn_draw_vectors)
-        draw_row.addWidget(self.btn_draw_both)
-        draw_row.addWidget(self.btn_draw_none)
-        gopt.addLayout(draw_row)
-        # Two rows, three columns — switches vertically aligned:
-        #   Point | info [sw] | Large  [sw]
-        #   Grid  | Axis [sw] | Archeo [sw]
-        info_grid = QGridLayout()
-        info_grid.setHorizontalSpacing(8)
-        info_grid.setVerticalSpacing(6)
+        vec_lay.addLayout(arrow_row)
+        vec_row = QHBoxLayout()
+        vec_row.setSpacing(6)
+        self.chk_vector_fixed = ToggleSwitch("Fixed")
+        self.chk_vector_fixed.setChecked(False)
+        self.chk_vector_fixed.setEnabled(False)
+        self.chk_vector_fixed.setToolTip(
+            L.html_tooltip(
+                "**Fixed** vector length. **On** = all shafts the same Length (cm).",
+                "**Off** = real P2–P3 size in metres.",
+                "Arrow **sense** uses the improved method (adaptive flip from "
+                "inclination): geometric axis is still P2→P3 after import.",
+            )
+        )
+        self.chk_vector_fixed.toggled.connect(self._on_vector_fixed_toggled)
+        vec_row.addWidget(self.chk_vector_fixed, 0)
+        vec_row.addWidget(QLabel("Length"))
+        self.spn_vector_len = QDoubleSpinBox()
+        self.spn_vector_len.setRange(0.5, 500.0)
+        self.spn_vector_len.setDecimals(1)
+        self.spn_vector_len.setSingleStep(1.0)
+        self.spn_vector_len.setSuffix(" cm")
+        self.spn_vector_len.setValue(L.VECTOR_LEN_CM_DEFAULT)
+        self.spn_vector_len.setEnabled(False)
+        self.spn_vector_len.setFixedWidth(88)
+        self.spn_vector_len.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Fixed,
+        )
+        self.spn_vector_len.setToolTip(
+            L.html_tooltip(
+                "Shaft length when **Fixed** is on. Unit: **centimetres** (map).",
+                "Centred on P1 when present; direction follows the improved "
+                "orientation sense. Arrow-head size stays under Arrow size.",
+            )
+        )
+        self.spn_vector_len.valueChanged.connect(self._on_vector_len)
+        vec_row.addWidget(self.spn_vector_len, 0)
+        vec_row.addStretch(1)
+        vec_lay.addLayout(vec_row)
+        gopt.addWidget(vec_box)
 
-        def _row_lab(text):
-            lab = QLabel(text)
-            lab.setStyleSheet('font-size:12px;')
-            lab.setMinimumWidth(40)
-            return lab
-
-        def _named_switch(caption, switch):
-            wrap = QWidget()
-            row = QHBoxLayout(wrap)
-            row.setContentsMargins(0, 0, 0, 0)
-            row.setSpacing(6)
-            lab = QLabel(caption)
-            lab.setStyleSheet('font-size:12px;')
-            row.addWidget(lab, 0, Qt.AlignmentFlag.AlignVCenter)
-            row.addWidget(switch, 0, Qt.AlignmentFlag.AlignVCenter)
-            row.addStretch(1)
-            return wrap
-
-        self.chk_point_info = ToggleSwitch('')
-        self.chk_point_info.setChecked(False)
-        self.chk_point_info.setEnabled(False)
-        self.chk_point_info.setToolTip(L.html_tooltip(
-            'Hover a point to show a card with its attributes',
-            '(coordinates, material, quadre, …).',
-        ))
-        self.chk_point_info.toggled.connect(self._on_point_info_toggled)
-        self.chk_point_info_large = ToggleSwitch('')
-        self.chk_point_info_large.setChecked(False)
-        self.chk_point_info_large.setEnabled(False)
-        self.chk_point_info_large.setToolTip(L.html_tooltip(
-            'Show **all** attributes on the Point info card.',
-            'Off: a short preferred list (id, quadre, material, P1, …).',
-        ))
-        self.chk_point_info_large.toggled.connect(self._on_point_info_large_toggled)
-        self.chk_axis_grid = ToggleSwitch('')
+        # View: frame + grids + Z step (sections).
+        view_box, view_lay = _gen_group("View")
+        self.chk_adaptive = ToggleSwitch("Adaptive frame")
+        self.chk_adaptive.setToolTip(
+            L.html_tooltip(
+                "**On:** zoom axes to the filtered cloud.",
+                "**Off:** restore the original full-data axis frame.",
+            )
+        )
+        self.chk_adaptive.toggled.connect(self._on_adaptive_toggled)
+        view_lay.addWidget(self.chk_adaptive)
+        self.chk_axis_grid = ToggleSwitch("")
         self.chk_axis_grid.setChecked(True)
         self.chk_axis_grid.setEnabled(False)
-        self.chk_axis_grid.setToolTip(L.html_tooltip(
-            '**Metric grid** in metres: 1 m lines on Plan; metre and Z steps on the sections.',
-            'Not the archaeological square labels (those are **Archeo**).',
-        ))
+        self.chk_axis_grid.setToolTip(
+            L.html_tooltip(
+                "**Metric grid** in metres: 1 m lines on Plan; metre and Z steps on the sections.",
+                "Not the archaeological square labels (those are **Archaeological grid**).",
+            )
+        )
         self.chk_axis_grid.toggled.connect(self._on_axis_grid_toggled)
-        self.chk_square_grid = ToggleSwitch('')
+        self.chk_square_grid = ToggleSwitch("")
         self.chk_square_grid.setChecked(False)
         self.chk_square_grid.setEnabled(False)
-        self.chk_square_grid.setToolTip(L.html_tooltip(
-            '**Archaeological squares** from the **quadre** field (e.g. R16): letter on Y, number on X, at cell centres.',
-            'Needs a valid quadre that matches the metre coordinates. Not the metric metre grid (**Axis**).',
-        ))
+        self.chk_square_grid.setToolTip(
+            L.html_tooltip(
+                "**Archaeological squares** from the **quadre** field (e.g. R16): letter on Y, number on X, at cell centres.",
+                "Needs a valid quadre that matches the metre coordinates. Not the metric metre grid (**Axis grid**).",
+            )
+        )
         self.chk_square_grid.toggled.connect(self._on_square_grid_toggled)
-        info_grid.addWidget(_row_lab('Point'), 0, 0, Qt.AlignmentFlag.AlignVCenter)
-        info_grid.addWidget(_named_switch('info', self.chk_point_info), 0, 1)
-        info_grid.addWidget(_named_switch('Large', self.chk_point_info_large), 0, 2)
-        info_grid.addWidget(_row_lab('Grid'), 1, 0, Qt.AlignmentFlag.AlignVCenter)
-        info_grid.addWidget(_named_switch('Axis', self.chk_axis_grid), 1, 1)
-        info_grid.addWidget(_named_switch('Archeo', self.chk_square_grid), 1, 2)
-        info_grid.setColumnStretch(1, 1)
-        info_grid.setColumnStretch(2, 1)
-        gopt.addLayout(info_grid)
-        self.btn_redraw = QPushButton('Redraw')
+        grid_row = QHBoxLayout()
+        grid_row.setSpacing(8)
+        grid_row.addWidget(_switch_row("Axis grid", self.chk_axis_grid), 1)
+        grid_row.addWidget(_switch_row("Archaeological grid", self.chk_square_grid), 1)
+        view_lay.addLayout(grid_row)
+        z_row = QHBoxLayout()
+        z_row.addWidget(QLabel("Z step"))
+        self.cmb_z_step = QComboBox()
+        for lab, val in (
+            ("Auto", None),
+            ("1 cm", 0.01),
+            ("2 cm", 0.02),
+            ("5 cm", 0.05),
+            ("10 cm", 0.1),
+            ("20 cm", 0.2),
+            ("25 cm", 0.25),
+            ("50 cm", 0.5),
+            ("1 m", 1.0),
+        ):
+            self.cmb_z_step.addItem(lab, val)
+        self.cmb_z_step.setEnabled(False)
+        self.cmb_z_step.setToolTip(
+            L.html_tooltip(
+                "**Z** tick / grid spacing on sections (real metres).",
+                "**Auto** picks a cm-friendly step from the visible range. Not the same as Stretch Z.",
+            )
+        )
+        self.cmb_z_step.currentIndexChanged.connect(self._on_z_step)
+        z_row.addWidget(self.cmb_z_step, 1)
+        view_lay.addLayout(z_row)
+        self.btn_3d = QPushButton("Open 3D view")
+        self.btn_3d.setToolTip(
+            L.html_tooltip(
+                "Open the point cloud in a **separate 3D window** (orbit / zoom).",
+                "Uses the plugin’s own viewer — **not** the QGIS 3D map view",
+                "(more stable on QGIS 3.40).",
+            )
+        )
+        self.btn_3d.clicked.connect(self.open_3d)
+        self.btn_3d.setEnabled(False)
+        view_lay.addWidget(self.btn_3d)
+        gopt.addWidget(view_box)
+
+        self.btn_redraw = QPushButton("Redraw")
         self.btn_redraw.setEnabled(False)
-        self.btn_redraw.setToolTip(L.html_tooltip(
-            '**Redraw:** close **Density** and **Profile** and show the loaded data.',
-            'Does not clear A/B, group filters, or General options.',
-            'Opening the General tab alone leaves Density/Profile as they are.',
-        ))
+        self.btn_redraw.setToolTip(
+            L.html_tooltip(
+                "**Redraw:** close **Density** and **Profile** and show the loaded data.",
+                "Does not clear A/B, group filters, or General options.",
+                "Opening the General tab alone leaves Density/Profile as they are.",
+            )
+        )
         self.btn_redraw.clicked.connect(self._on_redraw_loaded)
         gopt.addWidget(self.btn_redraw)
         gopt.addStretch(1)
-        self.opt_tabs.addTab(gen_page, 'General')
+        self.opt_tabs.addTab(gen_page, "General")
 
         dens_page = QWidget()
         dcol = QVBoxLayout(dens_page)
@@ -2991,16 +3742,16 @@ class ARSYSDock(QMainWindow):
         # Density engages on tab select (no On switch); mutually exclusive with Profile.
         dens_mode = QHBoxLayout()
         dens_mode.setSpacing(3)
-        dens_mode.addWidget(QLabel('Show'))
-        self.btn_dens_heat = QPushButton('Heatmap')
-        self.btn_dens_iso = QPushButton('Isolines')
-        self.btn_dens_both = QPushButton('Both')
+        dens_mode.addWidget(QLabel("Show"))
+        self.btn_dens_heat = QPushButton("Heatmap")
+        self.btn_dens_iso = QPushButton("Isolines")
+        self.btn_dens_both = QPushButton("Both")
         self._dens_mode_group = QButtonGroup(self)
         self._dens_mode_group.setExclusive(True)
         for btn, mode in (
-            (self.btn_dens_heat, 'heatmap'),
-            (self.btn_dens_iso, 'contours'),
-            (self.btn_dens_both, 'both'),
+            (self.btn_dens_heat, "heatmap"),
+            (self.btn_dens_iso, "contours"),
+            (self.btn_dens_both, "both"),
         ):
             btn.setCheckable(True)
             btn.setEnabled(False)
@@ -3010,21 +3761,27 @@ class ARSYSDock(QMainWindow):
             btn.clicked.connect(lambda _on, m=mode: self._set_density_mode(m))
             dens_mode.addWidget(btn)
         self.btn_dens_heat.setChecked(True)
-        self.btn_dens_heat.setToolTip(L.html_tooltip(
-            'Filled density (**Cloud** or **Bands**).',
-        ))
-        self.btn_dens_iso.setToolTip(L.html_tooltip(
-            'Contours of equal **raster-cell** KDE.',
-        ))
-        self.btn_dens_both.setToolTip(L.html_tooltip(
-            '**Heatmap** with isolines on top.',
-        ))
+        self.btn_dens_heat.setToolTip(
+            L.html_tooltip(
+                "Filled density (**Cloud** or **Bands**).",
+            )
+        )
+        self.btn_dens_iso.setToolTip(
+            L.html_tooltip(
+                "Contours of equal **raster-cell** KDE.",
+            )
+        )
+        self.btn_dens_both.setToolTip(
+            L.html_tooltip(
+                "**Heatmap** with isolines on top.",
+            )
+        )
         dcol.addLayout(dens_mode)
         width_tip = L.html_tooltip(
-            'Isoline stroke. Unit: **mm**. Range **0–1**.',
+            "Isoline stroke. Unit: **mm**. Range **0–1**.",
         )
         width_row = QHBoxLayout()
-        lbl_width = QLabel('Line width')
+        lbl_width = QLabel("Line width")
         lbl_width.setToolTip(width_tip)
         width_row.addWidget(lbl_width)
         self.sld_dens_width = QSlider(Qt.Orientation.Horizontal)
@@ -3035,7 +3792,7 @@ class ARSYSDock(QMainWindow):
         self.sld_dens_width.setEnabled(False)
         self.sld_dens_width.setToolTip(width_tip)
         self.sld_dens_width.valueChanged.connect(self._on_density_width)
-        self.lbl_dens_width = QLabel('0.15 mm')
+        self.lbl_dens_width = QLabel("0.15 mm")
         self.lbl_dens_width.setMinimumWidth(52)
         self.lbl_dens_width.setToolTip(width_tip)
         width_row.addWidget(self.sld_dens_width, 1)
@@ -3043,14 +3800,14 @@ class ARSYSDock(QMainWindow):
         dcol.addLayout(width_row)
         fill_row = QHBoxLayout()
         fill_row.setSpacing(3)
-        fill_row.addWidget(QLabel('Fill'))
-        self.btn_dens_cloud = QPushButton('Cloud')
-        self.btn_dens_bands = QPushButton('Bands')
+        fill_row.addWidget(QLabel("Fill"))
+        self.btn_dens_cloud = QPushButton("Cloud")
+        self.btn_dens_bands = QPushButton("Bands")
         self._dens_fill_group = QButtonGroup(self)
         self._dens_fill_group.setExclusive(True)
         for btn, fill in (
-            (self.btn_dens_cloud, 'cloud'),
-            (self.btn_dens_bands, 'bands'),
+            (self.btn_dens_cloud, "cloud"),
+            (self.btn_dens_bands, "bands"),
         ):
             btn.setCheckable(True)
             btn.setEnabled(False)
@@ -3060,39 +3817,47 @@ class ARSYSDock(QMainWindow):
             btn.clicked.connect(lambda _on, f=fill: self._set_density_fill(f))
             fill_row.addWidget(btn)
         self.btn_dens_bands.setChecked(True)
-        self.btn_dens_cloud.setToolTip(L.html_tooltip(
-            '**Cloud:** smooth interpolated colour. Same KDE as Bands.',
-        ))
-        self.btn_dens_bands.setToolTip(L.html_tooltip(
-            '**Bands:** discrete colour classes on the KDE raster (QGIS-style).',
-        ))
+        self.btn_dens_cloud.setToolTip(
+            L.html_tooltip(
+                "**Cloud:** smooth interpolated colour. Same KDE as Bands.",
+            )
+        )
+        self.btn_dens_bands.setToolTip(
+            L.html_tooltip(
+                "**Bands:** discrete colour classes on the KDE raster (QGIS-style).",
+            )
+        )
         dcol.addLayout(fill_row)
         pal_row = QHBoxLayout()
-        pal_row.addWidget(QLabel('Colour'))
+        pal_row.addWidget(QLabel("Colour"))
         self.cmb_dens_scheme = QComboBox()
         self.cmb_dens_scheme.setIconSize(QSize(72, 14))
         self.density_invert = False
         for sid, label, _stops in D.COLOR_SCHEMES:
             self.cmb_dens_scheme.addItem(
-                D.scheme_icon(sid, invert=False), label, sid,
+                D.scheme_icon(sid, invert=False),
+                label,
+                sid,
             )
         idx = self.cmb_dens_scheme.findData(D.DEFAULT_SCHEME)
         if idx >= 0:
             self.cmb_dens_scheme.setCurrentIndex(idx)
         self.cmb_dens_scheme.setEnabled(False)
-        self.cmb_dens_scheme.setToolTip(L.html_tooltip(
-            '**Colour** of the density surface (heatmap and isolines).',
-        ))
+        self.cmb_dens_scheme.setToolTip(
+            L.html_tooltip(
+                "**Colour** of the density surface (heatmap and isolines).",
+            )
+        )
         self.cmb_dens_scheme.currentIndexChanged.connect(self._on_density_scheme)
         pal_row.addWidget(self.cmb_dens_scheme, 1)
         dcol.addLayout(pal_row)
         rng_row = QHBoxLayout()
         rng_row.setSpacing(8)
         rng_row.setContentsMargins(0, 0, 0, 0)
-        self.lbl_dens_min = QLabel('Min')
-        self.lbl_dens_max = QLabel('Max')
+        self.lbl_dens_min = QLabel("Min")
+        self.lbl_dens_max = QLabel("Max")
         for lab in (self.lbl_dens_min, self.lbl_dens_max):
-            lab.setStyleSheet('font-size:10px;')
+            lab.setStyleSheet("font-size:10px;")
             lab.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         # Compact clusters: [Min + spin] … [Max + spin] … Auto
         # Spins hug digits+arrows; slack is only between clusters.
@@ -3117,20 +3882,22 @@ class ARSYSDock(QMainWindow):
         self._set_clip_tooltips()
         rng_row.addWidget(self.spn_dens_max, 0)
         rng_row.addStretch(1)
-        self.btn_dens_cut = QPushButton('Auto')
+        self.btn_dens_cut = QPushButton("Auto")
         _tune_auto_btn(self.btn_dens_cut)
         self.btn_dens_cut.setEnabled(False)
-        self.btn_dens_cut.setToolTip(L.html_tooltip(
-            '**On:** Min = 2% of positive plan cells; Max = peak cell.',
-            '**Off:** you set Min/Max. Raster cells, not a point count.',
-        ))
+        self.btn_dens_cut.setToolTip(
+            L.html_tooltip(
+                "**On:** Min = 2% of positive plan cells; Max = peak cell.",
+                "**Off:** you set Min/Max. Raster cells, not a point count.",
+            )
+        )
         self.btn_dens_cut.clicked.connect(self._auto_density_stretch)
         rng_row.addWidget(self.btn_dens_cut, 0)
         dcol.addLayout(rng_row)
         rad_row = QHBoxLayout()
-        lbl_radius = QLabel('Radius')
+        lbl_radius = QLabel("Radius")
         radius_tip = L.html_tooltip(
-            'Kernel bandwidth. Unit: **metres (m)**. Larger = smoother.',
+            "Kernel bandwidth. Unit: **metres (m)**. Larger = smoother.",
         )
         lbl_radius.setToolTip(radius_tip)
         rad_row.addWidget(lbl_radius)
@@ -3139,40 +3906,44 @@ class ARSYSDock(QMainWindow):
         self.spn_dens_radius.setRange(0.05, 80.0)
         self.spn_dens_radius.setSingleStep(0.05)
         self.spn_dens_radius.setValue(0.50)
-        self.spn_dens_radius.setSuffix(' m')
+        self.spn_dens_radius.setSuffix(" m")
         self.spn_dens_radius.setMinimumWidth(88)
         self.spn_dens_radius.setEnabled(False)
         self.spn_dens_radius.setToolTip(radius_tip)
         self.spn_dens_radius.valueChanged.connect(self._on_density_params)
         rad_row.addWidget(self.spn_dens_radius, 1)
-        self.btn_dens_auto = QPushButton('Auto')
+        self.btn_dens_auto = QPushButton("Auto")
         _tune_auto_btn(self.btn_dens_auto)
         self.btn_dens_auto.setEnabled(False)
-        self.btn_dens_auto.setToolTip(L.html_tooltip(
-            '**On:** Radius and Cell follow the filtered extent (**m**).',
-            '**Off:** you set them.',
-        ))
+        self.btn_dens_auto.setToolTip(
+            L.html_tooltip(
+                "**On:** Radius and Cell follow the filtered extent (**m**).",
+                "**Off:** you set them.",
+            )
+        )
         self.btn_dens_auto.clicked.connect(self._on_radius_auto)
         rad_row.addWidget(self.btn_dens_auto)
         dcol.addLayout(rad_row)
         ker_cell = QHBoxLayout()
-        ker_cell.addWidget(QLabel('Kernel'))
+        ker_cell.addWidget(QLabel("Kernel"))
         self.cmb_dens_kernel = QComboBox()
         for label, val in D.KERNELS:
             self.cmb_dens_kernel.addItem(label, val)
         self.cmb_dens_kernel.setEnabled(False)
-        self.cmb_dens_kernel.setToolTip(L.html_tooltip(
-            '**Kernel** shape on the raster: Quartic, Triangular, Uniform, Triweight, Epanechnikov.',
-        ))
+        self.cmb_dens_kernel.setToolTip(
+            L.html_tooltip(
+                "**Kernel** shape on the raster: Quartic, Triangular, Uniform, Triweight, Epanechnikov.",
+            )
+        )
         self.cmb_dens_kernel.currentIndexChanged.connect(self._schedule_density)
         ker_cell.addWidget(self.cmb_dens_kernel, 1)
         cell_tip = L.html_tooltip(
-            '**Cell** size of the density grid, in **metres**.',
-            'Smaller = sharper surface (slower). Larger = smoother, faster.',
-            'Rebuilt when you change it. The value is limited if it is too fine',
-            'for memory, or larger than the kernel **Radius**.',
+            "**Cell** size of the density grid, in **metres**.",
+            "Smaller = sharper surface (slower). Larger = smoother, faster.",
+            "Rebuilt when you change it. The value is limited if it is too fine",
+            "for memory, or larger than the kernel **Radius**.",
         )
-        lbl_cell = QLabel('Cell')
+        lbl_cell = QLabel("Cell")
         lbl_cell.setToolTip(cell_tip)
         ker_cell.addWidget(lbl_cell)
         self.spn_dens_cell = QDoubleSpinBox()
@@ -3180,7 +3951,7 @@ class ARSYSDock(QMainWindow):
         self.spn_dens_cell.setRange(0.005, 20.0)
         self.spn_dens_cell.setSingleStep(0.01)
         self.spn_dens_cell.setValue(0.05)
-        self.spn_dens_cell.setSuffix(' m')
+        self.spn_dens_cell.setSuffix(" m")
         self.spn_dens_cell.setMinimumWidth(88)
         self.spn_dens_cell.setEnabled(False)
         self.spn_dens_cell.setToolTip(cell_tip)
@@ -3190,29 +3961,33 @@ class ARSYSDock(QMainWindow):
         ker_cell.addWidget(self.spn_dens_cell, 1)
         dcol.addLayout(ker_cell)
         iso_row = QHBoxLayout()
-        iso_row.addWidget(QLabel('Isolines'))
+        iso_row.addWidget(QLabel("Isolines"))
         self.spn_dens_levels = QSpinBox()
         self.spn_dens_levels.setRange(3, 16)
         self.spn_dens_levels.setValue(8)
         self.spn_dens_levels.setEnabled(False)
-        self.spn_dens_levels.setToolTip(L.html_tooltip(
-            'Contour intervals between **Min** and **Max** cell values.',
-        ))
+        self.spn_dens_levels.setToolTip(
+            L.html_tooltip(
+                "Contour intervals between **Min** and **Max** cell values.",
+            )
+        )
         self.spn_dens_levels.valueChanged.connect(self._schedule_density_stretch)
         iso_row.addWidget(self.spn_dens_levels, 1)
-        self.chk_dens_labels = ToggleSwitch('Labels')
+        self.chk_dens_labels = ToggleSwitch("Labels")
         self.chk_dens_labels.setEnabled(False)
-        self.chk_dens_labels.setToolTip(L.html_tooltip(
-            'Write the **raster-cell** KDE value on each isoline.',
-        ))
+        self.chk_dens_labels.setToolTip(
+            L.html_tooltip(
+                "Write the **raster-cell** KDE value on each isoline.",
+            )
+        )
         self.chk_dens_labels.toggled.connect(self._on_density_labels)
         iso_row.addWidget(self.chk_dens_labels)
         dcol.addLayout(iso_row)
         op_row = QHBoxLayout()
         op_tip = L.html_tooltip(
-            'Opacity of painted **raster cells**. **100%** = solid; empty stays clear.',
+            "Opacity of painted **raster cells**. **100%** = solid; empty stays clear.",
         )
-        lbl_op = QLabel('Opacity')
+        lbl_op = QLabel("Opacity")
         lbl_op.setToolTip(op_tip)
         op_row.addWidget(lbl_op)
         self.sld_dens_op = QSlider(Qt.Orientation.Horizontal)
@@ -3221,54 +3996,58 @@ class ARSYSDock(QMainWindow):
         self.sld_dens_op.setEnabled(False)
         self.sld_dens_op.setToolTip(op_tip)
         self.sld_dens_op.valueChanged.connect(self._on_density_opacity)
-        self.lbl_dens_op = QLabel('70%')
+        self.lbl_dens_op = QLabel("70%")
         self.lbl_dens_op.setMinimumWidth(36)
         self.lbl_dens_op.setToolTip(op_tip)
         op_row.addWidget(self.sld_dens_op, 1)
         op_row.addWidget(self.lbl_dens_op)
         dcol.addLayout(op_row)
         dcol.addStretch(1)
-        self.opt_tabs.addTab(dens_page, 'Density')
+        self.opt_tabs.addTab(dens_page, "Density")
 
         find_page = QWidget()
         fcol = QVBoxLayout(find_page)
         fcol.setContentsMargins(6, 8, 6, 6)
         fcol.setSpacing(6)
-        find_note = QLabel('Exact words in any field · default AND')
-        find_note.setStyleSheet('font-size:10px;')
+        find_note = QLabel("Exact words in any field · default AND")
+        find_note.setStyleSheet("font-size:10px;")
         find_note.setWordWrap(True)
         fcol.addWidget(find_note)
         q_row = QHBoxLayout()
         q_row.setSpacing(6)
-        q_row.addWidget(QLabel('Query'))
+        q_row.addWidget(QLabel("Query"))
         self.edt_find = QLineEdit()
-        self.edt_find.setPlaceholderText('e.g. m10 os')
+        self.edt_find.setPlaceholderText("e.g. m10 os")
         self.edt_find.setEnabled(False)
         self.edt_find.setClearButtonEnabled(True)
-        self.edt_find.setToolTip(L.html_tooltip(
-            'Space-separated **exact words** across all attributes.',
-            'Default **AND** (every word). Toggle **OR** for any-word match.',
-        ))
+        self.edt_find.setToolTip(
+            L.html_tooltip(
+                "Space-separated **exact words** across all attributes.",
+                "Default **AND** (every word). Toggle **OR** for any-word match.",
+            )
+        )
         self.edt_find.textChanged.connect(self._schedule_find)
         self.edt_find.returnPressed.connect(self._find_select_first)
         q_row.addWidget(self.edt_find, 1)
-        self.chk_find_or = ToggleSwitch('OR')
+        self.chk_find_or = ToggleSwitch("OR")
         self.chk_find_or.setChecked(False)
         self.chk_find_or.setEnabled(False)
-        self.chk_find_or.setToolTip(L.html_tooltip(
-            '**Off:** all words required (AND).',
-            '**On:** any word matches (OR).',
-        ))
+        self.chk_find_or.setToolTip(
+            L.html_tooltip(
+                "**Off:** all words required (AND).",
+                "**On:** any word matches (OR).",
+            )
+        )
         self.chk_find_or.toggled.connect(self._schedule_find)
         q_row.addWidget(self.chk_find_or)
         fcol.addLayout(q_row)
-        self.lbl_find_status = QLabel('')
-        self.lbl_find_status.setStyleSheet('font-size:10px;')
+        self.lbl_find_status = QLabel("")
+        self.lbl_find_status.setStyleSheet("font-size:10px;")
         self.lbl_find_status.hide()
         fcol.addWidget(self.lbl_find_status)
         # Table with named columns (not "a - b - c —" captions).
         self.tbl_find = QTableWidget(0, 0)
-        self.tbl_find.setObjectName('arsysFindTable')
+        self.tbl_find.setObjectName("arsysFindTable")
         self.tbl_find.setEnabled(False)
         self.tbl_find.setMinimumHeight(96)
         # Alternating rows need themed AlternateBase (QGIS default is white).
@@ -3276,12 +4055,8 @@ class ARSYSDock(QMainWindow):
         self.tbl_find.setSelectionBehavior(
             QAbstractItemView.SelectionBehavior.SelectRows
         )
-        self.tbl_find.setSelectionMode(
-            QAbstractItemView.SelectionMode.SingleSelection
-        )
-        self.tbl_find.setEditTriggers(
-            QAbstractItemView.EditTrigger.NoEditTriggers
-        )
+        self.tbl_find.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.tbl_find.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.tbl_find.setShowGrid(False)
         self.tbl_find.verticalHeader().setVisible(False)
         self.tbl_find.horizontalHeader().setStretchLastSection(True)
@@ -3297,17 +4072,19 @@ class ARSYSDock(QMainWindow):
         )
         self.tbl_find.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.tbl_find.setWordWrap(False)
-        self.tbl_find.setToolTip(L.html_tooltip(
-            'List of matching records. Column titles are the field names from the data.',
-            'Click a row to highlight that point with a **green ring** on Plan, Longitudinal and Transversal.',
-        ))
+        self.tbl_find.setToolTip(
+            L.html_tooltip(
+                "List of matching records. Column titles are the field names from the data.",
+                "Click a row to highlight that point with a **green ring** on Plan, Longitudinal and Transversal.",
+            )
+        )
         self.tbl_find.itemSelectionChanged.connect(self._on_find_selection)
         self.tbl_find.cellClicked.connect(self._on_find_cell)
         fcol.addWidget(self.tbl_find, 1)
         # Keep alias so older call sites / themes do not break mid-refactor.
         self.lst_find = self.tbl_find
-        self.lbl_find_detail = QLabel('')
-        self.lbl_find_detail.setObjectName('arsysFindDetail')
+        self.lbl_find_detail = QLabel("")
+        self.lbl_find_detail.setObjectName("arsysFindDetail")
         self.lbl_find_detail.setTextFormat(Qt.TextFormat.RichText)
         self.lbl_find_detail.setWordWrap(True)
         self.lbl_find_detail.setAlignment(
@@ -3320,31 +4097,31 @@ class ARSYSDock(QMainWindow):
         self.lbl_find_detail.setMinimumWidth(0)
         self.lbl_find_detail.hide()
         detail_scroll = QScrollArea()
-        detail_scroll.setObjectName('arsysFindDetailScroll')
+        detail_scroll.setObjectName("arsysFindDetailScroll")
         detail_scroll.setWidgetResizable(True)
         detail_scroll.setFrameShape(QFrame.Shape.NoFrame)
         detail_scroll.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
-        detail_scroll.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded
-        )
+        detail_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         detail_scroll.setWidget(self.lbl_find_detail)
         detail_scroll.setMinimumHeight(80)
         detail_scroll.setMaximumHeight(220)
         self._find_detail_scroll = detail_scroll
         detail_scroll.hide()
         fcol.addWidget(detail_scroll, 1)
-        self.btn_find_clear = QPushButton('Clear selection')
+        self.btn_find_clear = QPushButton("Clear selection")
         self.btn_find_clear.setEnabled(False)
         self.btn_find_clear.hide()
-        self.btn_find_clear.setToolTip(L.html_tooltip(
-            'Deselect the current Find hit: removes the **green ring** and hides the detail card.',
-            'The search text and the hit list stay as they are.',
-        ))
+        self.btn_find_clear.setToolTip(
+            L.html_tooltip(
+                "Deselect the current Find hit: removes the **green ring** and hides the detail card.",
+                "The search text and the hit list stay as they are.",
+            )
+        )
         self.btn_find_clear.clicked.connect(self._clear_find_selection)
         fcol.addWidget(self.btn_find_clear)
-        self.opt_tabs.addTab(find_page, 'Find')
+        self.opt_tabs.addTab(find_page, "Find")
 
         # ----- Profile (manual A–B profile; Phase 1) -----
         prof_page = QWidget()
@@ -3352,24 +4129,28 @@ class ARSYSDock(QMainWindow):
         pcol.setContentsMargins(6, 8, 6, 6)
         pcol.setSpacing(6)
         wide_row = QHBoxLayout()
-        wide_row.addWidget(QLabel('Wide'))
+        wide_row.addWidget(QLabel("Wide"))
         self.spn_profile_wide = QDoubleSpinBox()
         self.spn_profile_wide.setRange(1.0, 50000.0)
         self.spn_profile_wide.setDecimals(0)
         self.spn_profile_wide.setSingleStep(1.0)
-        self.spn_profile_wide.setSuffix(' cm')
+        self.spn_profile_wide.setSuffix(" cm")
         self.spn_profile_wide.setValue(10.0)
-        self.spn_profile_wide.setToolTip(L.html_tooltip(
-            '**Wide** — full width of the profile strip on Plan, in **centimetres**, measured perpendicular to A→B.',
-            'Points are kept by their **XY** position only (all depths Z are included).',
-        ))
+        self.spn_profile_wide.setToolTip(
+            L.html_tooltip(
+                "**Wide** — full width of the profile strip on Plan, in **centimetres**, measured perpendicular to A→B.",
+                "Points are kept by their **XY** position only (all depths Z are included).",
+            )
+        )
         self.spn_profile_wide.valueChanged.connect(self._on_profile_wide)
         wide_row.addWidget(self.spn_profile_wide, 1)
         pcol.addLayout(wide_row)
-        self.btn_profile_new = QPushButton('New Profile')
-        self.btn_profile_new.setToolTip(L.html_tooltip(
-            'Clear the current profile and start again: **Pick A**, then **Pick B** on Plan.',
-        ))
+        self.btn_profile_new = QPushButton("New Profile")
+        self.btn_profile_new.setToolTip(
+            L.html_tooltip(
+                "Clear the current profile and start again: **Pick A**, then **Pick B** on Plan.",
+            )
+        )
         self.btn_profile_new.clicked.connect(self._new_profile)
         pcol.addWidget(self.btn_profile_new)
 
@@ -3391,68 +4172,63 @@ class ARSYSDock(QMainWindow):
         self.spn_profile_bx.valueChanged.connect(self._on_profile_b_coords)
         self.spn_profile_by.valueChanged.connect(self._on_profile_b_coords)
         a_row = QHBoxLayout()
-        a_row.addWidget(QLabel('A'))
-        a_row.addWidget(QLabel('X'))
+        a_row.addWidget(QLabel("A"))
+        a_row.addWidget(QLabel("X"))
         a_row.addWidget(self.spn_profile_ax, 1)
-        a_row.addWidget(QLabel('Y'))
+        a_row.addWidget(QLabel("Y"))
         a_row.addWidget(self.spn_profile_ay, 1)
         pcol.addLayout(a_row)
         b_row = QHBoxLayout()
-        b_row.addWidget(QLabel('B'))
-        b_row.addWidget(QLabel('X'))
+        b_row.addWidget(QLabel("B"))
+        b_row.addWidget(QLabel("X"))
         b_row.addWidget(self.spn_profile_bx, 1)
-        b_row.addWidget(QLabel('Y'))
+        b_row.addWidget(QLabel("Y"))
         b_row.addWidget(self.spn_profile_by, 1)
         pcol.addLayout(b_row)
         self.lbl_profile_status = QLabel(
-            'Open this tab to pick A then B on Plan (cue on the Plan title bar).'
+            "Open this tab to pick A then B on Plan (cue on the Plan title bar)."
         )
         self.lbl_profile_status.setWordWrap(True)
-        self.lbl_profile_status.setStyleSheet('color:%s;' % UI_THEME.get('muted', '#8a8178'))
+        self.lbl_profile_status.setStyleSheet(
+            "color:%s;" % UI_THEME.get("muted", "#8a8178")
+        )
         pcol.addWidget(self.lbl_profile_status)
         pcol.addStretch(1)
-        self.opt_tabs.addTab(prof_page, 'Profile')
+        self.opt_tabs.addTab(prof_page, "Profile")
         self.opt_tabs.currentChanged.connect(self._on_opt_tab_changed)
         ocol.addWidget(self.opt_tabs, 1)
 
         foot = QHBoxLayout()
         foot.setSpacing(6)
-        self.btn_reset = QPushButton('Reset')
-        self.btn_reset.setToolTip(L.html_tooltip(
-            '**Reset view:** all groups, full XYZ range, default sizes,',
-            'Draw → Points, Adaptive off, and **re-fit** the three canvases.',
-            'Does not change Density settings or Dark/Light.',
-        ))
+        self.btn_reset = QPushButton("Reset")
+        self.btn_reset.setToolTip(
+            L.html_tooltip(
+                "**Reset view:** all groups, full XYZ range, default sizes,",
+                "Draw → Points, Adaptive off, and **re-fit** the three canvases.",
+                "Does not change Density settings or Dark/Light.",
+            )
+        )
         self.btn_reset.clicked.connect(self.reset_view)
         self.btn_reset.setEnabled(False)
         foot.addWidget(self.btn_reset, 1)
-        self.btn_to_qgis = QPushButton('To QGIS layer')
-        self.btn_to_qgis._arsys_icon = 'to_qgis.svg'
+        self.btn_to_qgis = QPushButton("To QGIS layer")
+        self.btn_to_qgis._arsys_icon = "to_qgis.svg"
         self.btn_to_qgis.setIcon(
-            _themed_icon('to_qgis.svg', UI_THEME.get('ink', '#fff5e6'), 16)
+            _themed_icon("to_qgis.svg", UI_THEME.get("ink", "#fff5e6"), 16)
         )
         self.btn_to_qgis.setIconSize(QSize(16, 16))
-        self.btn_to_qgis.setToolTip(L.html_tooltip(
-            'Add the **full** loaded table to the QGIS project as a temporary **memory** point layer',
-            '(all attributes; current plugin filters are ignored).',
-            'Save it yourself (GeoPackage…) if you need it after closing QGIS.',
-        ))
+        self.btn_to_qgis.setToolTip(
+            L.html_tooltip(
+                "Add the **full** loaded table to the QGIS project as a temporary **memory** point layer",
+                "(all attributes; current plugin filters are ignored).",
+                "Save it yourself (GeoPackage…) if you need it after closing QGIS.",
+            )
+        )
         self.btn_to_qgis.clicked.connect(self.publish_to_qgis)
         self.btn_to_qgis.setEnabled(False)
         foot.addWidget(self.btn_to_qgis, 1)
-        self.btn_3d = QPushButton('Open 3D view')
-        self.btn_3d.setToolTip(L.html_tooltip(
-            'Open the point cloud in a **separate 3D window** (orbit / zoom).',
-            'Uses the plugin’s own viewer — **not** the QGIS 3D map view',
-            '(more stable on QGIS 3.40).',
-        ))
-        self.btn_3d.clicked.connect(self.open_3d)
-        self.btn_3d.setEnabled(False)
-        foot.addWidget(self.btn_3d, 1)
         ocol.addLayout(foot)
-        opt.setSizePolicy(
-            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding
-        )
+        opt.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         col.addWidget(opt, 1)
         return side
 
@@ -3462,91 +4238,219 @@ class ARSYSDock(QMainWindow):
         grid = QGridLayout(stage)
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(1)
-        self.plan = PlotPane('Plan · X / Y', 'x', 'y', 'X', 'Y', on_zoom=self._open_zoom)
-        self.longp = PlotPane('Longitudinal · X / Z', 'x', 'z', 'X', 'Z', on_zoom=self._open_zoom)
-        self.transp = PlotPane('Transversal · Y / Z', 'y', 'z', 'Y', 'Z', on_zoom=self._open_zoom)
+        self.plan = PlotPane(
+            "Plan · X / Y", "x", "y", "X", "Y", on_zoom=self._open_zoom
+        )
+        self.longp = PlotPane(
+            "Longitudinal · X / Z", "x", "z", "X", "Z", on_zoom=self._open_zoom
+        )
+        self.transp = PlotPane(
+            "Transversal · Y / Z", "y", "z", "Y", "Z", on_zoom=self._open_zoom
+        )
         self._point_info_card = PointInfoCard(stage)
-        self._filters_panel = QWidget()
-        fl = QVBoxLayout(self._filters_panel)
+        # Inner body scrolls; mosaic cell (MosaicScroll) keeps equal 2×2 proportions.
+        self._filters_body = QWidget()
+        fl = QVBoxLayout(self._filters_body)
+        fl.setContentsMargins(6, 4, 6, 6)
         fl.setSpacing(8)
-        self._filters_lab = QLabel('Resources')
+        self._filters_lab = QLabel("Resources")
         fl.addWidget(self._filters_lab)
         # 1) Filter first (always): XYZ range
-        self._filter_box = QGroupBox('Filter')
+        self._filter_box = QGroupBox("Filter")
         fbox = QVBoxLayout(self._filter_box)
         fbox.setContentsMargins(8, 10, 8, 8)
         fbox.setSpacing(4)
-        self.rng_x = RangeSliders('x', self.schedule_filter)
-        self.rng_y = RangeSliders('y', self.schedule_filter)
-        self.rng_z = RangeSliders('z', self.schedule_filter)
+        self.rng_x = RangeSliders("x", self.schedule_filter)
+        self.rng_y = RangeSliders("y", self.schedule_filter)
+        self.rng_z = RangeSliders("z", self.schedule_filter)
         fbox.addWidget(self.rng_x)
         fbox.addWidget(self.rng_y)
         fbox.addWidget(self.rng_z)
-        btn_reset = QPushButton('Reset')
-        btn_reset.setToolTip(L.html_tooltip(
-            '**Reset Filter:** restore full **X / Y / Z** ranges only.',
-            'Does not change Point size, Draw, groups, Density or Stretch Z.',
-        ))
+        btn_reset = QPushButton("Reset")
+        btn_reset.setToolTip(
+            L.html_tooltip(
+                "**Reset Filter:** restore full **X / Y / Z** ranges only.",
+                "Does not change Point size, Draw, groups, Density or Stretch Z.",
+            )
+        )
         btn_reset.clicked.connect(self.reset_xyz_filter)
         fbox.addWidget(btn_reset)
         fl.addWidget(self._filter_box)
         # Stretch Z — longitudinal / transversal only (plan stays isotropic).
-        stretch_box = QGroupBox('Stretch Z')
+        # One row: On | Factor | spin | Reset (same idea as Lite .stretch-z-line).
+        stretch_box = QGroupBox("Stretch Z")
         scol = QVBoxLayout(stretch_box)
         scol.setContentsMargins(8, 10, 8, 8)
         scol.setSpacing(4)
-        self.chk_z_stretch = ToggleSwitch('On')
-        self.chk_z_stretch.setChecked(False)
-        self.chk_z_stretch.setToolTip(L.html_tooltip(
-            'Exaggerate **height (Z)** on Longitudinal and Transversal only — Plan stays 1∶1.',
-            'Both sections use the same Factor; a long trench and a narrow width may look different.',
-            'Applies on screen, zoom windows and PNG export. Axis labels stay in **real** metres.',
-        ))
-        self.chk_z_stretch.toggled.connect(self._on_z_stretch_toggled)
-        scol.addWidget(self.chk_z_stretch)
         stretch_row = QHBoxLayout()
-        stretch_row.setSpacing(4)
-        stretch_row.addWidget(QLabel('Factor'))
+        stretch_row.setSpacing(6)
+        self.chk_z_stretch = ToggleSwitch("On")
+        self.chk_z_stretch.setChecked(False)
+        # Fixed width so "On" + track never get squeezed by Factor/Reset.
+        self.chk_z_stretch.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Fixed,
+        )
+        self.chk_z_stretch.setToolTip(
+            L.html_tooltip(
+                "Exaggerate **height (Z)** on Longitudinal and Transversal only — Plan stays 1∶1.",
+                "Both sections use the same Factor; a long trench and a narrow width may look different.",
+                "Applies on screen, zoom windows and PNG export. Axis labels stay in **real** metres.",
+            )
+        )
+        self.chk_z_stretch.toggled.connect(self._on_z_stretch_toggled)
+        stretch_row.addWidget(self.chk_z_stretch, 0)
+        stretch_row.addWidget(QLabel("Factor"), 0)
         self.spn_z_stretch = QDoubleSpinBox()
         self.spn_z_stretch.setRange(1.0, 50.0)
         self.spn_z_stretch.setSingleStep(0.5)
         self.spn_z_stretch.setDecimals(1)
         self.spn_z_stretch.setValue(2.0)
         self.spn_z_stretch.setEnabled(False)
-        self.spn_z_stretch.setToolTip(L.html_tooltip(
-            'Vertical exaggeration. **1** = true scale;',
-            '**2** = Z drawn twice as tall as X/Y, etc.',
-        ))
+        self.spn_z_stretch.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+        )
+        self.spn_z_stretch.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Fixed,
+        )
+        # Compact: enough for "50.0" + arrows, not a full-row expander.
+        self.spn_z_stretch.setFixedWidth(68)
+        self.spn_z_stretch.setToolTip(
+            L.html_tooltip(
+                "Vertical exaggeration. **1** = true scale;",
+                "**2** = Z drawn twice as tall as X/Y, etc.",
+            )
+        )
         self.spn_z_stretch.valueChanged.connect(self._on_z_stretch_factor)
-        stretch_row.addWidget(self.spn_z_stretch, 1)
-        self.btn_z_stretch_reset = QPushButton('Reset')
+        stretch_row.addWidget(self.spn_z_stretch, 0)
+        self.btn_z_stretch_reset = QPushButton("Reset")
         self.btn_z_stretch_reset.setEnabled(False)
-        self.btn_z_stretch_reset.setToolTip(L.html_tooltip(
-            'Set Factor back to **1** (true vertical scale).',
-        ))
+        self.btn_z_stretch_reset.setToolTip(
+            L.html_tooltip(
+                "Set Factor back to **1** (true vertical scale).",
+            )
+        )
         self.btn_z_stretch_reset.clicked.connect(self._on_z_stretch_reset)
-        stretch_row.addWidget(self.btn_z_stretch_reset)
+        stretch_row.addWidget(self.btn_z_stretch_reset, 0)
         scol.addLayout(stretch_row)
         # Cross-view hover: highlight the same record on the other two panes.
-        hover_box = QGroupBox('Cross-view')
+        hover_box = QGroupBox("Cross-view")
         hcol = QVBoxLayout(hover_box)
         hcol.setContentsMargins(8, 10, 8, 8)
         hcol.setSpacing(4)
-        self.chk_cross_hover = ToggleSwitch('On')
+        self.chk_cross_hover = ToggleSwitch("On")
         self.chk_cross_hover.setChecked(False)
-        self.chk_cross_hover.setToolTip(L.html_tooltip(
-            'Point under the mouse is marked on the **other two** projections',
-            '(plan ↔ longitudinal ↔ transversal). Same record, blue ring.',
-            'Main panes only — not Zoom windows or density.',
-        ))
+        self.chk_cross_hover.setToolTip(
+            L.html_tooltip(
+                "Point under the mouse is marked on the **other two** projections",
+                "(plan ↔ longitudinal ↔ transversal). Same record, blue ring.",
+                "Main panes only — not Zoom windows or density.",
+            )
+        )
         self.chk_cross_hover.toggled.connect(self._on_cross_hover_toggled)
         hcol.addWidget(self.chk_cross_hover)
-        hcol.addStretch(1)
-        stretch_hover = QHBoxLayout()
-        stretch_hover.setSpacing(6)
-        stretch_hover.addWidget(stretch_box, 1)
-        stretch_hover.addWidget(hover_box, 1)
-        fl.addLayout(stretch_hover)
+        measure_box = QGroupBox("Measure")
+        mcol = QVBoxLayout(measure_box)
+        mcol.setContentsMargins(8, 10, 8, 8)
+        mcol.setSpacing(4)
+        self.btn_measure = QPushButton("Measure")
+        self.btn_measure.setCheckable(True)
+        self.btn_measure.setEnabled(False)
+        # Same compact chrome / height as Stretch Z Reset and Cross-view switch.
+        self.btn_measure.setStyleSheet(compact_btn_css())
+        self.btn_measure.setFixedHeight(28)
+        self.btn_measure.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Fixed,
+        )
+        # Reserve width for blink/checked so the Measure group never grows later.
+        _mf = QFont(self.btn_measure.font())
+        _mf.setBold(True)
+        _mw = QFontMetrics(_mf).horizontalAdvance("Measure") + 20
+        self.btn_measure.setMinimumWidth(max(64, _mw))
+        self.btn_measure.setToolTip(
+            L.html_tooltip(
+                "Measure **distance between two points** on a 2D view.",
+                "Click **Measure**, then **A** and **B** on Plan, Longitudinal or Transversal. "
+                "You can switch view at any time (starts a new pair there). "
+                "Distance is in **real metres** (Stretch Z does not change the value). "
+                "**Esc** or click **Measure** again to stop. Middle-drag still pans.",
+            )
+        )
+        self.btn_measure.toggled.connect(self._on_measure_toggled)
+        mcol.addWidget(self.btn_measure)
+        # Recalculate G_orientacio / G_pendent from the geometric axis.
+        angles_box = QGroupBox("Orientation")
+        acol = QVBoxLayout(angles_box)
+        acol.setContentsMargins(8, 10, 8, 8)
+        acol.setSpacing(4)
+        self.btn_recalc_angles = QPushButton("Recalculate")
+        self.btn_recalc_angles.setEnabled(False)
+        self.btn_recalc_angles.setStyleSheet(compact_btn_css())
+        self.btn_recalc_angles.setFixedHeight(28)
+        self.btn_recalc_angles.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Fixed,
+        )
+        self.btn_recalc_angles.setToolTip(
+            L.html_tooltip(
+                "Recalculate **G_orientacio** and **G_pendent** from the "
+                "P2→P3 axis (improved method).",
+                "Overwrites existing values. Rows without a vector axis are skipped.",
+            )
+        )
+        self.btn_recalc_angles.clicked.connect(self._on_recalc_vector_angles)
+        acol.addWidget(self.btn_recalc_angles)
+        # Cursor XYZ readout (any plot canvas → real metres), QGIS-style X Y Z.
+        coords_box = QGroupBox("Coordinates")
+        coords_box.setToolTip(
+            L.html_tooltip(
+                "**Cursor position** on Plan, Longitudinal, Transversal or Zoom.",
+                "Three values in **X Y Z** order (real metres). ",
+            )
+        )
+        ccol = QVBoxLayout(coords_box)
+        ccol.setContentsMargins(8, 10, 8, 8)
+        ccol.setSpacing(2)
+        # Values only (no X:/Y:/Z: labels): e.g. 23.67  --  -378.47
+        self.lbl_coords_res = QLabel("--  --  --")
+        self.lbl_coords_res.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+        )
+        ccol.addWidget(self.lbl_coords_res)
+        self._style_coord_labels()
+        # Soft min so the title stays readable; scroll absorbs overflow in narrow cells.
+        _cfm = QFontMetrics(coords_box.font())
+        coords_box.setMinimumWidth(max(120, _cfm.horizontalAdvance("Coordinates") + 24))
+        # Lite .res-row-2 { align-items: stretch }: lock equal outer height from the start.
+        self._res_stretch_box = stretch_box
+        self._res_measure_box = measure_box
+        self._res_cross_box = hover_box
+        self._res_angles_box = angles_box
+        self._res_coords_box = coords_box
+        _res_row_policy = QSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Preferred,
+        )
+        for _box in (stretch_box, measure_box, hover_box, angles_box, coords_box):
+            _box.setSizePolicy(_res_row_policy)
+        # Wrap when the Resources cell is narrow (Orientation row) instead of
+        # forcing the mosaic column wider.
+        self._res_tools_host = FlowHost()
+        stretch_hover = FlowLayout(self._res_tools_host, margin=0, h_spacing=6, v_spacing=6)
+        stretch_hover.addWidget(stretch_box)
+        stretch_hover.addWidget(measure_box)
+        stretch_hover.addWidget(hover_box)
+        stretch_hover.addWidget(angles_box)
+        stretch_hover.addWidget(coords_box)
+        fl.addWidget(self._res_tools_host)
+        QTimer.singleShot(0, self._sync_resources_tool_row)
+        # Esc cancels Measure even when a canvas overlay has focus.
+        self._measure_esc = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
+        self._measure_esc.setContext(Qt.ShortcutContext.WindowShortcut)
+        self._measure_esc.activated.connect(self._on_measure_escape)
+        self._measure_esc.setEnabled(False)
         # 2) Below: content that appears / disappears (e.g. density scale)
         self._resources_dynamic = QWidget()
         dyn = QVBoxLayout(self._resources_dynamic)
@@ -3558,12 +4462,14 @@ class ARSYSDock(QMainWindow):
         scale_row.setSpacing(8)
         self._dens_scale = DensityScaleBar(self._dens_scale_row)
         scale_row.addWidget(self._dens_scale, 1)
-        self.chk_dens_invert = ToggleSwitch('Invert')
+        self.chk_dens_invert = ToggleSwitch("Invert")
         self.chk_dens_invert.setEnabled(False)
         self.chk_dens_invert.hide()
-        self.chk_dens_invert.setToolTip(L.html_tooltip(
-            'Reverse the **density scale** (colours flip end to end).',
-        ))
+        self.chk_dens_invert.setToolTip(
+            L.html_tooltip(
+                "Reverse the **density scale** (colours flip end to end).",
+            )
+        )
         self.chk_dens_invert.toggled.connect(self._on_density_invert)
         # Align with the colour strip (top), not the value labels below.
         inv_col = QWidget(self._dens_scale_row)
@@ -3575,42 +4481,48 @@ class ARSYSDock(QMainWindow):
         scale_row.addWidget(inv_col, 0, Qt.AlignmentFlag.AlignTop)
         dyn.addWidget(self._dens_scale_row)
         # Profile exports (visible while Profile tab / profile is active).
-        self._profile_export_box = QGroupBox('Profile export')
+        self._profile_export_box = QGroupBox("Profile export")
         pex = QHBoxLayout(self._profile_export_box)
         pex.setContentsMargins(8, 10, 8, 8)
         pex.setSpacing(6)
-        ink = UI_THEME.get('ink', '#fff5e6')
-        self.btn_profile_csv = QPushButton('Export CSV…')
-        self.btn_profile_csv._arsys_icon = 'export.svg'
-        self.btn_profile_csv.setIcon(_themed_icon('export.svg', ink, 16))
+        ink = UI_THEME.get("ink", "#fff5e6")
+        self.btn_profile_csv = QPushButton("Export CSV…")
+        self.btn_profile_csv._arsys_icon = "export.svg"
+        self.btn_profile_csv.setIcon(_themed_icon("export.svg", ink, 16))
         self.btn_profile_csv.setIconSize(QSize(16, 16))
-        self.btn_profile_csv.setToolTip(L.html_tooltip(
-            'Save **profile** as CSV.',
-        ))
+        self.btn_profile_csv.setToolTip(
+            L.html_tooltip(
+                "Save **profile** as CSV.",
+            )
+        )
         self.btn_profile_csv.clicked.connect(self._export_profile_csv)
         pex.addWidget(self.btn_profile_csv, 1)
-        self.btn_profile_to_qgis = QPushButton('To QGIS…')
-        self.btn_profile_to_qgis._arsys_icon = 'to_qgis.svg'
-        self.btn_profile_to_qgis.setIcon(_themed_icon('to_qgis.svg', ink, 16))
+        self.btn_profile_to_qgis = QPushButton("To QGIS layer")
+        self.btn_profile_to_qgis._arsys_icon = "to_qgis.svg"
+        self.btn_profile_to_qgis.setIcon(_themed_icon("to_qgis.svg", ink, 16))
         self.btn_profile_to_qgis.setIconSize(QSize(16, 16))
-        self.btn_profile_to_qgis.setToolTip(L.html_tooltip(
-            'Add **profile** to QGIS as memory layer.',
-        ))
+        self.btn_profile_to_qgis.setToolTip(
+            L.html_tooltip(
+                "Add **profile** to QGIS as memory layer.",
+            )
+        )
         self._menu_profile_qgis = QMenu(self.btn_profile_to_qgis)
-        self._act_profile_qgis_long = QAction('LONG section (plan axis × Z)', self)
-        self._act_profile_qgis_trans = QAction('TRANS section (other plan axis × Z)', self)
-        self._act_profile_qgis_both = QAction('LONG + TRANS', self)
+        self._act_profile_qgis_long = QAction("LONG section (plan axis × Z)", self)
+        self._act_profile_qgis_trans = QAction(
+            "TRANS section (other plan axis × Z)", self
+        )
+        self._act_profile_qgis_both = QAction("LONG + TRANS", self)
         self._menu_profile_qgis.addAction(self._act_profile_qgis_long)
         self._menu_profile_qgis.addAction(self._act_profile_qgis_trans)
         self._menu_profile_qgis.addAction(self._act_profile_qgis_both)
         self._act_profile_qgis_long.triggered.connect(
-            lambda: self._publish_profile_sections('long')
+            lambda: self._publish_profile_sections("long")
         )
         self._act_profile_qgis_trans.triggered.connect(
-            lambda: self._publish_profile_sections('trans')
+            lambda: self._publish_profile_sections("trans")
         )
         self._act_profile_qgis_both.triggered.connect(
-            lambda: self._publish_profile_sections('both')
+            lambda: self._publish_profile_sections("both")
         )
         self.btn_profile_to_qgis.setMenu(self._menu_profile_qgis)
         pex.addWidget(self.btn_profile_to_qgis, 1)
@@ -3618,6 +4530,14 @@ class ARSYSDock(QMainWindow):
         dyn.addWidget(self._profile_export_box)
         fl.addWidget(self._resources_dynamic)
         fl.addStretch(1)
+        self._filters_panel = MosaicScroll()
+        self._filters_panel.setWidget(self._filters_body)
+        for _cell in (self.plan, self.longp, self.transp, self._filters_panel):
+            _cell.setSizePolicy(
+                QSizePolicy.Policy.Expanding,
+                QSizePolicy.Policy.Expanding,
+            )
+            _cell.setMinimumSize(0, 0)
         grid.addWidget(self.plan, 0, 0)
         grid.addWidget(self.longp, 0, 1)
         grid.addWidget(self.transp, 1, 0)
@@ -3626,6 +4546,10 @@ class ARSYSDock(QMainWindow):
         grid.setRowStretch(1, 1)
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
+        grid.setRowMinimumHeight(0, 0)
+        grid.setRowMinimumHeight(1, 0)
+        grid.setColumnMinimumWidth(0, 0)
+        grid.setColumnMinimumWidth(1, 0)
         self._wire_cross_hover()
         # Drag A/B on Plan once endpoints exist (hit-test in overlay).
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
@@ -3637,69 +4561,78 @@ class ARSYSDock(QMainWindow):
 
     def import_csv(self):
         dlg = importer.ImportCsvDialog(self)
-        exec_fn = getattr(dlg, 'exec', None) or dlg.exec_
+        exec_fn = getattr(dlg, "exec", None) or dlg.exec_
         if exec_fn() != dlg.Accepted:
             return
         mapping = dlg.result_mapping()
         if not mapping:
             return
-        path = mapping['path']
+        path = mapping["path"]
         label = os.path.basename(path)
-        sheet = mapping.get('sheet') or ''
+        sheet = mapping.get("sheet") or ""
         if sheet:
-            label = '%s · %s' % (label, sheet)
+            label = "%s · %s" % (label, sheet)
         try:
-            with _qgis_busy('ARSYSplotQGIS: importing table'):
+            with _qgis_busy("ARSYSplotQGIS: importing table"):
                 layer, skipped = importer.build_pointz_layer(
-                    path, mapping['x'], mapping['y'], mapping['z'],
-                    mapping['group'],
-                    p2x_field=mapping.get('p2x') or '',
-                    p2y_field=mapping.get('p2y') or '',
-                    p2z_field=mapping.get('p2z') or '',
-                    p3x_field=mapping.get('p3x') or '',
-                    p3y_field=mapping.get('p3y') or '',
-                    p3z_field=mapping.get('p3z') or '',
+                    path,
+                    mapping["x"],
+                    mapping["y"],
+                    mapping["z"],
+                    mapping["group"],
+                    p2x_field=mapping.get("p2x") or "",
+                    p2y_field=mapping.get("p2y") or "",
+                    p2z_field=mapping.get("p2z") or "",
+                    p3x_field=mapping.get("p3x") or "",
+                    p3y_field=mapping.get("p3y") or "",
+                    p3z_field=mapping.get("p3z") or "",
                     sheet=sheet,
                 )
                 self._attach_source(layer, label)
         except Exception as exc:
-            QMessageBox.warning(self, 'Import', str(exc))
+            QMessageBox.warning(self, "Import", str(exc))
             return
-        extra = ' (%d rows skipped)' % skipped if skipped else ''
-        self.iface.messageBar().pushInfo('ARSYSplotQGIS', 'Loaded %d points%s.' % (
-            layer.featureCount(), extra
-        ))
+        extra = " (%d rows skipped)" % skipped if skipped else ""
+        self.iface.messageBar().pushInfo(
+            "ARSYSplotQGIS", "Loaded %d points%s." % (layer.featureCount(), extra)
+        )
 
     def load_sample(self):
         path = importer.SAMPLE_CSV
         if not os.path.isfile(path):
             QMessageBox.warning(
-                self, 'Sample',
-                'sample.csv was not found in the plugin folder.'
+                self, "Sample", "sample.csv was not found in the plugin folder."
             )
             return
         try:
-            with _qgis_busy('ARSYSplotQGIS: loading sample'):
+            with _qgis_busy("ARSYSplotQGIS: loading sample"):
                 layer, skipped = importer.build_pointz_layer(
-                    path, 'p1x', 'p1y', 'p1z', 'material',
-                    p2x_field='p2x', p2y_field='p2y', p2z_field='p2z',
-                    p3x_field='p3x', p3y_field='p3y', p3z_field='p3z',
+                    path,
+                    "p1x",
+                    "p1y",
+                    "p1z",
+                    "material",
+                    p2x_field="p2x",
+                    p2y_field="p2y",
+                    p2z_field="p2z",
+                    p3x_field="p3x",
+                    p3y_field="p3y",
+                    p3z_field="p3z",
                 )
-                self._attach_source(layer, 'sample.csv')
+                self._attach_source(layer, "sample.csv")
         except Exception as exc:
-            QMessageBox.warning(self, 'Sample', str(exc))
+            QMessageBox.warning(self, "Sample", str(exc))
             return
-        extra = ' (%d rows skipped)' % skipped if skipped else ''
+        extra = " (%d rows skipped)" % skipped if skipped else ""
         self.iface.messageBar().pushInfo(
-            'ARSYSplotQGIS', 'Loaded sample: %d points%s.' % (
-                layer.featureCount(), extra
-            )
+            "ARSYSplotQGIS",
+            "Loaded sample: %d points%s." % (layer.featureCount(), extra),
         )
 
     def _is_user_layer(self, layer):
-        if layer is None or not hasattr(layer, 'wkbType'):
+        if layer is None or not hasattr(layer, "wkbType"):
             return False
-        if layer.customProperty('arsysplotqgis'):
+        if layer.customProperty("arsysplotqgis"):
             return False
         return True
 
@@ -3724,7 +4657,10 @@ class ARSYSDock(QMainWindow):
                 continue
             if not self._layer_switch_on(lyr):
                 continue
-            if QgsWkbTypes.geometryType(lyr.wkbType()) != QgsWkbTypes.GeometryType.PointGeometry:
+            if (
+                QgsWkbTypes.geometryType(lyr.wkbType())
+                != QgsWkbTypes.GeometryType.PointGeometry
+            ):
                 continue
             out.append(lyr)
         return out
@@ -3776,7 +4712,7 @@ class ARSYSDock(QMainWindow):
                 current = view.currentLayer()
             if not self._is_user_layer(current):
                 node = view.currentNode()
-                if node is not None and hasattr(node, 'layer'):
+                if node is not None and hasattr(node, "layer"):
                     current = node.layer()
         selected = []
         if view is not None:
@@ -3805,37 +4741,45 @@ class ARSYSDock(QMainWindow):
 
     def use_selected_layer(self):
         layer = self._selected_project_layer()
-        if layer is None or not hasattr(layer, 'wkbType'):
+        if layer is None or not hasattr(layer, "wkbType"):
             QMessageBox.warning(
-                self, 'Layer',
-                'Select a point layer in the QGIS layer list, then click '
-                'Use selected layer.',
+                self,
+                "Layer",
+                "Select a point layer in the QGIS layer list, then click "
+                "Use selected layer.",
             )
             return
-        if QgsWkbTypes.geometryType(layer.wkbType()) != QgsWkbTypes.GeometryType.PointGeometry:
-            QMessageBox.warning(self, 'Layer', 'Need a point layer.')
+        if (
+            QgsWkbTypes.geometryType(layer.wkbType())
+            != QgsWkbTypes.GeometryType.PointGeometry
+        ):
+            QMessageBox.warning(self, "Layer", "Need a point layer.")
             return
         try:
-            with _qgis_busy('ARSYSplotQGIS: reading layer'):
+            with _qgis_busy("ARSYSplotQGIS: reading layer"):
                 style = L.imported_layer_style(layer)
                 clone, skipped = L.clone_as_private_source(layer)
-                extra = ' (%d rows skipped)' % skipped if skipped else ''
+                extra = " (%d rows skipped)" % skipped if skipped else ""
                 self._attach_source(clone, layer.name(), style=style)
         except Exception as exc:
-            QMessageBox.warning(self, 'Layer', str(exc))
+            QMessageBox.warning(self, "Layer", str(exc))
             return
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             self.iface.setActiveLayer(layer)
         self._legend_layer = layer
         nvec = 0
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-            nvec = int(clone.customProperty('arsysplotqgis_vectors') or 0)
-        vec_txt = (', %d vectors' % nvec) if nvec else ''
+            nvec = int(clone.customProperty("arsysplotqgis_vectors") or 0)
+        vec_txt = (", %d vectors" % nvec) if nvec else ""
         self.iface.messageBar().pushInfo(
-            'ARSYSplotQGIS',
-            'Using a private copy of “%s”: %d points%s%s. '
-            'The project layer is unchanged.' % (
-                layer.name(), clone.featureCount(), vec_txt, extra,
+            "ARSYSplotQGIS",
+            "Using a private copy of “%s”: %d points%s%s. "
+            "The project layer is unchanged."
+            % (
+                layer.name(),
+                clone.featureCount(),
+                vec_txt,
+                extra,
             ),
         )
 
@@ -3843,34 +4787,36 @@ class ARSYSDock(QMainWindow):
         """Full loaded table → project memory layer (legend). Filters ignored."""
         if self.source is None or not self.source.isValid():
             QMessageBox.warning(
-                self, 'To QGIS',
-                'Load data first (Import, Sample or Use selected layer).',
+                self,
+                "To QGIS",
+                "Load data first (Import, Sample or Use selected layer).",
             )
             return
         try:
-            with _qgis_busy('ARSYSplotQGIS: sending layer to QGIS'):
-                label = ''
+            with _qgis_busy("ARSYSplotQGIS: sending layer to QGIS"):
+                label = ""
                 with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                     label = str(
-                        self.source.customProperty('arsysplotqgis_file')
+                        self.source.customProperty("arsysplotqgis_file")
                         or self.source.name()
-                        or ''
+                        or ""
                     )
                 if label:
                     label = os.path.splitext(os.path.basename(label))[0] or label
                 published = L.publish_source_to_project(
-                    self.source, name=label or 'ARSYSplot',
+                    self.source,
+                    name=label or "ARSYSplot",
                 )
         except Exception as exc:
-            QMessageBox.warning(self, 'To QGIS', str(exc))
+            QMessageBox.warning(self, "To QGIS", str(exc))
             return
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             self.iface.setActiveLayer(published)
             self.iface.zoomToActiveLayer()
         self.iface.messageBar().pushInfo(
-            'ARSYSplotQGIS',
-            'Added “%s” to the project (%d points, memory). '
-            'Save the layer (e.g. GeoPackage) if you need it after closing QGIS.'
+            "ARSYSplotQGIS",
+            "Added “%s” to the project (%d points, memory). "
+            "Save the layer (e.g. GeoPackage) if you need it after closing QGIS."
             % (published.name(), published.featureCount()),
         )
 
@@ -3878,7 +4824,9 @@ class ARSYSDock(QMainWindow):
 
     def _profile_is_ready(self):
         return P.profile_ready(
-            self._profile_a, self._profile_b, self._profile_wide_cm,
+            self._profile_a,
+            self._profile_b,
+            self._profile_wide_cm,
         )
 
     def _profile_spec(self):
@@ -3887,7 +4835,7 @@ class ARSYSDock(QMainWindow):
         Only while Profile is engaged. A/B may still be stored when Density
         suspends the profile so the cut can be restored later.
         """
-        if not getattr(self, '_profile_engaged', False):
+        if not getattr(self, "_profile_engaged", False):
             return None
         if not self._profile_is_ready():
             return None
@@ -3896,25 +4844,25 @@ class ARSYSDock(QMainWindow):
         wide_m = P.cm_to_m(self._profile_wide_cm)
         if frame is None or wide_m <= 0.0:
             return None
-        return {'frame': frame, 'wide_m': wide_m}
+        return {"frame": frame, "wide_m": wide_m}
 
     def _on_opt_tab_changed(self, index):
-        tabs = getattr(self, 'opt_tabs', None)
+        tabs = getattr(self, "opt_tabs", None)
         if tabs is None:
             return
-        name = ''
+        name = ""
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-            name = str(tabs.tabText(index) or '')
+            name = str(tabs.tabText(index) or "")
         # Density ↔ Profile exclusive. General / Find do not park them;
         # General → Redraw does that explicitly.
-        if name == 'Density':
+        if name == "Density":
             self._engage_density_mode()
             return
-        if name == 'Profile':
+        if name == "Profile":
             self._engage_profile_mode()
             return
         # Leaving Profile while still picking: drop the Plan cue.
-        if self._profile_picking and name != 'Profile':
+        if self._profile_picking and name != "Profile":
             self._stop_profile_pick()
             self._set_plan_profile_cue(None)
 
@@ -3928,7 +4876,7 @@ class ARSYSDock(QMainWindow):
         """Hide profile / use site-wide sections; keep A, B and Wide."""
         self._stop_profile_pick()
         self._set_plan_profile_cue(None)
-        if not getattr(self, '_profile_engaged', False):
+        if not getattr(self, "_profile_engaged", False):
             # Still refresh overlay in case a stale profile is painted.
             self._apply_profile_visuals()
             return
@@ -3964,37 +4912,37 @@ class ARSYSDock(QMainWindow):
             self._set_plan_profile_cue(None)
             return
         if self._profile_a is None:
-            self._start_profile_pick('A')
+            self._start_profile_pick("A")
         elif self._profile_b is None:
-            self._start_profile_pick('B')
+            self._start_profile_pick("B")
 
     def _start_profile_pick(self, which):
         if self.source is None:
             return
-        which = 'A' if str(which).upper() == 'A' else 'B'
+        which = "A" if str(which).upper() == "A" else "B"
         self._profile_engaged = True
         self._profile_turn_density_off()
         self._profile_picking = which
-        ov = getattr(getattr(self, 'plan', None), 'overlay', None)
+        ov = getattr(getattr(self, "plan", None), "overlay", None)
         if ov is not None:
             ov._profile_click = self._on_profile_plan_click
             ov.setCursor(Qt.CursorShape.CrossCursor)
-        cue = 'Pick A on Plan' if which == 'A' else 'Pick B on Plan'
+        cue = "Pick A on Plan" if which == "A" else "Pick B on Plan"
         self._set_plan_profile_cue(cue)
-        self._update_profile_status(cue + '…')
+        self._update_profile_status(cue + "…")
 
     def _stop_profile_pick(self):
         self._profile_picking = None
-        ov = getattr(getattr(self, 'plan', None), 'overlay', None)
+        ov = getattr(getattr(self, "plan", None), "overlay", None)
         if ov is not None:
             ov._profile_click = None
             ov.setCursor(Qt.CursorShape.ArrowCursor)
 
     def _set_plan_profile_cue(self, text):
         """Show / hide blinking cue centred on the Plan title bar."""
-        plan = getattr(self, 'plan', None)
-        lab = getattr(plan, '_cue_lab', None) if plan is not None else None
-        timer = getattr(self, '_profile_cue_timer', None)
+        plan = getattr(self, "plan", None)
+        lab = getattr(plan, "_cue_lab", None) if plan is not None else None
+        timer = getattr(self, "_profile_cue_timer", None)
         if lab is None:
             return
         if not text:
@@ -4011,53 +4959,53 @@ class ARSYSDock(QMainWindow):
             timer.start()
 
     def _apply_plan_profile_cue_style(self, bright):
-        plan = getattr(self, 'plan', None)
-        lab = getattr(plan, '_cue_lab', None) if plan is not None else None
+        plan = getattr(self, "plan", None)
+        lab = getattr(plan, "_cue_lab", None) if plan is not None else None
         if lab is None:
             return
         which = self._profile_picking
         # Pick A = red cue; Pick B = blue cue (blink between saturated / soft).
-        if which == 'B':
+        if which == "B":
             if bright:
                 lab.setStyleSheet(
-                    'color:#1a5cff; font-weight:800; font-size:13px;'
-                    ' letter-spacing:0.06em; background:rgba(40,100,255,0.20);'
-                    ' border:1px solid #3366ff; border-radius:4px; padding:2px 10px;'
+                    "color:#1a5cff; font-weight:800; font-size:13px;"
+                    " letter-spacing:0.06em; background:rgba(40,100,255,0.20);"
+                    " border:1px solid #3366ff; border-radius:4px; padding:2px 10px;"
                 )
             else:
                 lab.setStyleSheet(
-                    'color:#66aaff; font-weight:800; font-size:13px;'
-                    ' letter-spacing:0.06em; background:rgba(100,160,255,0.18);'
-                    ' border:1px solid #6699ff; border-radius:4px; padding:2px 10px;'
+                    "color:#66aaff; font-weight:800; font-size:13px;"
+                    " letter-spacing:0.06em; background:rgba(100,160,255,0.18);"
+                    " border:1px solid #6699ff; border-radius:4px; padding:2px 10px;"
                 )
             return
         if bright:
             lab.setStyleSheet(
-                'color:#ff1a1a; font-weight:800; font-size:13px;'
-                ' letter-spacing:0.06em; background:rgba(255,40,40,0.18);'
-                ' border:1px solid #ff3333; border-radius:4px; padding:2px 10px;'
+                "color:#ff1a1a; font-weight:800; font-size:13px;"
+                " letter-spacing:0.06em; background:rgba(255,40,40,0.18);"
+                " border:1px solid #ff3333; border-radius:4px; padding:2px 10px;"
             )
         else:
             lab.setStyleSheet(
-                'color:#ff8888; font-weight:800; font-size:13px;'
-                ' letter-spacing:0.06em; background:rgba(255,100,100,0.16);'
-                ' border:1px solid #ff6666; border-radius:4px; padding:2px 10px;'
+                "color:#ff8888; font-weight:800; font-size:13px;"
+                " letter-spacing:0.06em; background:rgba(255,100,100,0.16);"
+                " border:1px solid #ff6666; border-radius:4px; padding:2px 10px;"
             )
 
     def _blink_plan_profile_cue(self):
-        plan = getattr(self, 'plan', None)
-        lab = getattr(plan, '_cue_lab', None) if plan is not None else None
+        plan = getattr(self, "plan", None)
+        lab = getattr(plan, "_cue_lab", None) if plan is not None else None
         if lab is None or not lab.isVisible():
-            timer = getattr(self, '_profile_cue_timer', None)
+            timer = getattr(self, "_profile_cue_timer", None)
             if timer is not None:
                 timer.stop()
             return
-        self._profile_cue_bright = not bool(getattr(self, '_profile_cue_bright', True))
+        self._profile_cue_bright = not bool(getattr(self, "_profile_cue_bright", True))
         self._apply_plan_profile_cue_style(self._profile_cue_bright)
 
     def _on_profile_plan_click(self, px, py):
         which = self._profile_picking
-        if which not in ('A', 'B'):
+        if which not in ("A", "B"):
             return
         xy = self._pane_map_xy(self.plan, px, py)
         if xy is None:
@@ -4066,12 +5014,12 @@ class ARSYSDock(QMainWindow):
 
     def _on_profile_endpoint_drag(self, which, map_x, map_y, phase):
         """Live-move A or B on Plan; rebuild LONG/TRANS when the drag ends."""
-        which = 'A' if str(which).upper() == 'A' else 'B'
+        which = "A" if str(which).upper() == "A" else "B"
         try:
             x, y = float(map_x), float(map_y)
         except (TypeError, ValueError):
             return
-        if which == 'A':
+        if which == "A":
             self._profile_a = (x, y)
         else:
             self._profile_b = (x, y)
@@ -4079,19 +5027,19 @@ class ARSYSDock(QMainWindow):
         self._sync_profile_spins_from_state()
         # Profile footprint follows the mouse; sections wait for release.
         self._apply_profile_visuals()
-        if phase != 'end':
+        if phase != "end":
             return
         self._profile_turn_density_off()
         self._update_profile_ui()
         if self._profile_is_ready() and self.source is not None:
             self._apply_filters_now()
         # Keep Pick B cue if B is still missing after dragging A.
-        if self._profile_picking == 'B' and self._profile_b is None:
-            ov = getattr(getattr(self, 'plan', None), 'overlay', None)
+        if self._profile_picking == "B" and self._profile_b is None:
+            ov = getattr(getattr(self, "plan", None), "overlay", None)
             if ov is not None:
                 ov._profile_click = self._on_profile_plan_click
                 ov.setCursor(Qt.CursorShape.CrossCursor)
-            self._set_plan_profile_cue('Pick B on Plan')
+            self._set_plan_profile_cue("Pick B on Plan")
         elif self._profile_is_ready():
             self._stop_profile_pick()
             self._set_plan_profile_cue(None)
@@ -4101,7 +5049,7 @@ class ARSYSDock(QMainWindow):
             x, y = float(x), float(y)
         except (TypeError, ValueError):
             return
-        if which == 'A':
+        if which == "A":
             self._profile_a = (x, y)
             if not from_spin:
                 self._sync_profile_spins_from_state()
@@ -4113,7 +5061,7 @@ class ARSYSDock(QMainWindow):
             if self.source is not None:
                 self._apply_filters_now()
             # Automatically continue with B.
-            self._start_profile_pick('B')
+            self._start_profile_pick("B")
             return
         self._profile_b = (x, y)
         if not from_spin:
@@ -4130,10 +5078,10 @@ class ARSYSDock(QMainWindow):
 
     def _sync_profile_spins_from_state(self):
         spins = (
-            getattr(self, 'spn_profile_ax', None),
-            getattr(self, 'spn_profile_ay', None),
-            getattr(self, 'spn_profile_bx', None),
-            getattr(self, 'spn_profile_by', None),
+            getattr(self, "spn_profile_ax", None),
+            getattr(self, "spn_profile_ay", None),
+            getattr(self, "spn_profile_bx", None),
+            getattr(self, "spn_profile_by", None),
         )
         if any(s is None for s in spins):
             return
@@ -4154,22 +5102,24 @@ class ARSYSDock(QMainWindow):
             s.blockSignals(False)
 
     def _on_profile_a_coords(self, *_args):
-        if getattr(self, 'spn_profile_ax', None) is None:
+        if getattr(self, "spn_profile_ax", None) is None:
             return
         if not self.spn_profile_ax.isEnabled():
             return
         self._profile_a = (
-            self.spn_profile_ax.value(), self.spn_profile_ay.value(),
+            self.spn_profile_ax.value(),
+            self.spn_profile_ay.value(),
         )
         self._after_profile_endpoint_change()
 
     def _on_profile_b_coords(self, *_args):
-        if getattr(self, 'spn_profile_bx', None) is None:
+        if getattr(self, "spn_profile_bx", None) is None:
             return
         if not self.spn_profile_bx.isEnabled():
             return
         self._profile_b = (
-            self.spn_profile_bx.value(), self.spn_profile_by.value(),
+            self.spn_profile_bx.value(),
+            self.spn_profile_by.value(),
         )
         self._after_profile_endpoint_change()
 
@@ -4178,7 +5128,7 @@ class ARSYSDock(QMainWindow):
         self._profile_turn_density_off()
         # Typing A then B: advance cue / finish like clicks.
         if self._profile_a is not None and self._profile_b is None:
-            self._start_profile_pick('B')
+            self._start_profile_pick("B")
         elif self._profile_is_ready():
             self._stop_profile_pick()
             self._set_plan_profile_cue(None)
@@ -4220,144 +5170,135 @@ class ARSYSDock(QMainWindow):
         return n
 
     def _update_profile_status(self, text=None):
-        lab = getattr(self, 'lbl_profile_status', None)
+        lab = getattr(self, "lbl_profile_status", None)
         if lab is None:
             return
         if text is not None:
             lab.setText(text)
             return
-        if self._profile_picking in ('A', 'B'):
+        if self._profile_picking in ("A", "B"):
             lab.setText(
-                'Follow the blinking cue on Plan — pick point %s.'
+                "Follow the blinking cue on Plan — pick point %s."
                 % self._profile_picking
             )
             return
         if self._profile_is_ready():
             n = self._count_profile_points()
-            axis = 'X'
-            spec = self._profile_spec()
-            if spec is not None:
-                axis = P.long_plan_axis(spec['frame']).upper()
-            other = 'Y' if axis == 'X' else 'X'
             lab.setText(
-                'Profile ready — %d point%s in profile (Wide %.1f cm). '
-                'LONG = %s×Z, TRANS = %s×Z. '
-                'Drag A/B on Plan to adjust. '
-                'Resources → Profile export for CSV / To QGIS.'
-                % (
-                    n, '' if n == 1 else 's', float(self._profile_wide_cm),
-                    axis, other,
-                )
+                "Profile: %d point%s\n"
+                "Drag A/B on Plan to adjust" % (n, "" if n == 1 else "s")
             )
         elif self._profile_a is None and self._profile_b is None:
-            lab.setText('Pick A then B on Plan (blinking cue on the Plan bar).')
+            lab.setText("Pick A then B on Plan (blinking cue on the Plan bar).")
         elif self._profile_b is None:
-            lab.setText('Point A set — pick B on Plan (or drag A to adjust).')
+            lab.setText("Point A set — pick B on Plan (or drag A to adjust).")
         else:
-            lab.setText('A and B are too close, or Wide is zero.')
+            lab.setText("A and B are too close, or Wide is zero.")
 
     def _update_profile_ui(self):
         self._update_profile_status()
         has = self.source is not None
         ready = self._profile_is_ready()
         for w in (
-            getattr(self, 'btn_profile_new', None),
-            getattr(self, 'spn_profile_wide', None),
+            getattr(self, "btn_profile_new", None),
+            getattr(self, "spn_profile_wide", None),
         ):
             if w is not None:
                 w.setEnabled(has)
         if has:
             for sp in (
-                getattr(self, 'spn_profile_ax', None),
-                getattr(self, 'spn_profile_ay', None),
-                getattr(self, 'spn_profile_bx', None),
-                getattr(self, 'spn_profile_by', None),
+                getattr(self, "spn_profile_ax", None),
+                getattr(self, "spn_profile_ay", None),
+                getattr(self, "spn_profile_bx", None),
+                getattr(self, "spn_profile_by", None),
             ):
                 if sp is not None:
                     sp.setEnabled(True)
         self._sync_profile_export_box(ready)
 
     def _sync_profile_export_box(self, ready=None):
-        box = getattr(self, '_profile_export_box', None)
+        box = getattr(self, "_profile_export_box", None)
         if box is None:
             return
         if ready is None:
             ready = self._profile_is_ready()
         # Only while Profile is the active mode (not while Density suspends it).
-        show = bool(getattr(self, '_profile_engaged', False))
+        show = bool(getattr(self, "_profile_engaged", False))
         box.setVisible(show)
         for w in (
-            getattr(self, 'btn_profile_csv', None),
-            getattr(self, 'btn_profile_to_qgis', None),
+            getattr(self, "btn_profile_csv", None),
+            getattr(self, "btn_profile_to_qgis", None),
         ):
             if w is not None:
                 w.setEnabled(bool(ready) and self.source is not None)
         for act in (
-            getattr(self, '_act_profile_qgis_long', None),
-            getattr(self, '_act_profile_qgis_trans', None),
-            getattr(self, '_act_profile_qgis_both', None),
+            getattr(self, "_act_profile_qgis_long", None),
+            getattr(self, "_act_profile_qgis_trans", None),
+            getattr(self, "_act_profile_qgis_both", None),
         ):
             if act is not None:
                 act.setEnabled(bool(ready) and self.source is not None)
 
     def _profile_source_basename(self):
         """Stem of the loaded data file/layer name (for export defaults)."""
-        base = ''
-        src = getattr(self, 'source', None)
+        base = ""
+        src = getattr(self, "source", None)
         if src is not None:
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-                base = str(
-                    src.customProperty('arsysplotqgis_file')
-                    or src.name()
-                    or ''
-                )
+                base = str(src.customProperty("arsysplotqgis_file") or src.name() or "")
         if base:
             base = os.path.splitext(os.path.basename(base))[0] or base
-        base = re.sub(r'[^\w\-]+', '_', (base or 'ARSYSplot').strip())
-        return base.strip('_') or 'ARSYSplot'
+        base = re.sub(r"[^\w\-]+", "_", (base or "ARSYSplot").strip())
+        return base.strip("_") or "ARSYSplot"
 
     def _export_profile_csv(self):
         """Save profile records (Group ∩ Resources) as CSV + U/V / plan axis."""
         if self.source is None or not self.source.isValid():
             QMessageBox.warning(
-                self, 'Export CSV',
-                'Load data first (Import, Sample or Use selected layer).',
+                self,
+                "Export CSV",
+                "Load data first (Import, Sample or Use selected layer).",
             )
             return
         spec = self._profile_spec()
         if spec is None:
             QMessageBox.warning(
-                self, 'Export CSV',
-                'Define a profile first (Pick A and B on Plan).',
+                self,
+                "Export CSV",
+                "Define a profile first (Pick A and B on Plan).",
             )
             return
         from datetime import date
-        suggested = '%s_SelectedProfile_%s.csv' % (
+
+        suggested = "%s_SelectedProfile_%s.csv" % (
             self._profile_source_basename(),
-            date.today().strftime('%Y%m%d'),
+            date.today().strftime("%Y%m%d"),
         )
         path, _flt = QFileDialog.getSaveFileName(
             self,
-            'Export profile CSV',
+            "Export profile CSV",
             suggested,
-            'CSV (*.csv);;All files (*)',
+            "CSV (*.csv);;All files (*)",
         )
         if not path:
             return
-        if not path.lower().endswith('.csv'):
-            path = path + '.csv'
-        frame = spec['frame']
-        wide_m = spec['wide_m']
+        if not path.lower().endswith(".csv"):
+            path = path + ".csv"
+        frame = spec["frame"]
+        wide_m = spec["wide_m"]
         plan_axis = P.long_plan_axis(frame)
         fields = [f.name() for f in self.source.fields()]
         extra = [
-            'X', 'Y', 'Z',
-            'dist_AB', 'offset',
-            'plan_%s' % plan_axis.upper(),
+            "X",
+            "Y",
+            "Z",
+            "dist_AB",
+            "offset",
+            "plan_%s" % plan_axis.upper(),
         ]
         n = 0
         try:
-            with open(path, 'w', newline='', encoding='utf-8') as fh:
+            with open(path, "w", newline="", encoding="utf-8") as fh:
                 writer = csv.writer(fh)
                 writer.writerow(fields + extra)
                 for feat in self.source.getFeatures():
@@ -4383,140 +5324,152 @@ class ARSYSDock(QMainWindow):
                     row = []
                     for name in fields:
                         val = feat[name]
-                        if val is None or str(val) in ('NULL', 'None'):
-                            row.append('')
+                        if val is None or str(val) in ("NULL", "None"):
+                            row.append("")
                         else:
                             row.append(val)
                     row.extend([x, y, z, u, v, h])
                     writer.writerow(row)
                     n += 1
         except OSError as exc:
-            QMessageBox.warning(self, 'Export CSV', str(exc))
+            QMessageBox.warning(self, "Export CSV", str(exc))
             return
         self.iface.messageBar().pushInfo(
-            'ARSYSplotQGIS',
-            'Wrote %d profile point%s to %s.'
-            % (n, '' if n == 1 else 's', os.path.basename(path)),
+            "ARSYSplotQGIS",
+            "Wrote %d profile point%s to %s."
+            % (n, "" if n == 1 else "s", os.path.basename(path)),
         )
 
-    def _publish_profile_sections(self, which='both'):
+    def _publish_profile_sections(self, which="both"):
         """Add Profile LONG and/or TRANS section layers to the QGIS project."""
         if self.source is None or not self.source.isValid():
             QMessageBox.warning(
-                self, 'To QGIS',
-                'Load data first (Import, Sample or Use selected layer).',
+                self,
+                "To QGIS",
+                "Load data first (Import, Sample or Use selected layer).",
             )
             return
         if not self._profile_is_ready():
             QMessageBox.warning(
-                self, 'To QGIS',
-                'Define a profile first (Pick A and B on Plan).',
+                self,
+                "To QGIS",
+                "Define a profile first (Pick A and B on Plan).",
             )
             return
-        which = str(which or 'both').lower()
-        want_long = which in ('long', 'both', 'all')
-        want_trans = which in ('trans', 'both', 'all')
+        which = str(which or "both").lower()
+        want_long = which in ("long", "both", "all")
+        want_trans = which in ("trans", "both", "all")
         if not want_long and not want_trans:
             want_long = want_trans = True
-        long_axis = 'X'
-        trans_axis = 'Y'
+        long_axis = "X"
+        trans_axis = "Y"
         spec = self._profile_spec()
         if spec is not None:
-            long_axis = P.long_plan_axis(spec['frame']).upper()
-            trans_axis = P.trans_plan_axis(spec['frame']).upper()
+            long_axis = P.long_plan_axis(spec["frame"]).upper()
+            trans_axis = P.trans_plan_axis(spec["frame"]).upper()
         base = self._profile_source_basename()
         published = []
         try:
-            with _qgis_busy('ARSYSplotQGIS: sending profile sections to QGIS'):
+            with _qgis_busy("ARSYSplotQGIS: sending profile sections to QGIS"):
                 if want_long:
-                    lyr = getattr(self, 'long_layer', None)
+                    lyr = getattr(self, "long_layer", None)
                     if lyr is None or not lyr.isValid() or lyr.featureCount() < 1:
-                        raise ValueError('LONG section has no points yet.')
-                    published.append(L.publish_vector_to_project(
-                        lyr,
-                        name='%s · Profile LONG (%s/Z)' % (base, long_axis),
-                    ))
+                        raise ValueError("LONG section has no points yet.")
+                    published.append(
+                        L.publish_vector_to_project(
+                            lyr,
+                            name="%s · Profile LONG (%s/Z)" % (base, long_axis),
+                        )
+                    )
                 if want_trans:
-                    lyr = getattr(self, 'trans_layer', None)
+                    lyr = getattr(self, "trans_layer", None)
                     if lyr is None or not lyr.isValid() or lyr.featureCount() < 1:
-                        raise ValueError('TRANS section has no points yet.')
-                    published.append(L.publish_vector_to_project(
-                        lyr,
-                        name='%s · Profile TRANS (%s/Z)' % (base, trans_axis),
-                    ))
+                        raise ValueError("TRANS section has no points yet.")
+                    published.append(
+                        L.publish_vector_to_project(
+                            lyr,
+                            name="%s · Profile TRANS (%s/Z)" % (base, trans_axis),
+                        )
+                    )
         except Exception as exc:
-            QMessageBox.warning(self, 'To QGIS', str(exc))
+            QMessageBox.warning(self, "To QGIS", str(exc))
             return
         if not published:
-            QMessageBox.warning(self, 'To QGIS', 'Nothing to publish.')
+            QMessageBox.warning(self, "To QGIS", "Nothing to publish.")
             return
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             self.iface.setActiveLayer(published[0])
             self.iface.zoomToActiveLayer()
-        names = ', '.join('“%s”' % lyr.name() for lyr in published)
+        names = ", ".join("“%s”" % lyr.name() for lyr in published)
         self.iface.messageBar().pushInfo(
-            'ARSYSplotQGIS',
-            'Added %s (point section layers only, same as LONG/TRANS panes). '
-            'Save as GeoPackage to keep them.'
-            % names,
+            "ARSYSplotQGIS",
+            "Added %s (point section layers only, same as LONG/TRANS panes). "
+            "Save as GeoPackage to keep them." % names,
         )
 
     def _apply_profile_visuals(self):
         """Profile overlay on Plan + LONG/TRANS titles/axis labels."""
-        plan = getattr(self, 'plan', None)
-        longp = getattr(self, 'longp', None)
-        transp = getattr(self, 'transp', None)
+        plan = getattr(self, "plan", None)
+        longp = getattr(self, "longp", None)
+        transp = getattr(self, "transp", None)
         ready = self._profile_is_ready()
-        engaged = bool(getattr(self, '_profile_engaged', False))
+        engaged = bool(getattr(self, "_profile_engaged", False))
         a = self._profile_a if engaged else None
         b = self._profile_b if engaged else None
-        if plan is not None and getattr(plan, 'overlay', None) is not None:
+        if plan is not None and getattr(plan, "overlay", None) is not None:
             poly = None
-            if engaged and ready and self._profile_a is not None and self._profile_b is not None:
+            if (
+                engaged
+                and ready
+                and self._profile_a is not None
+                and self._profile_b is not None
+            ):
                 poly = P.corridor_polygon(
-                    self._profile_a[0], self._profile_a[1],
-                    self._profile_b[0], self._profile_b[1],
+                    self._profile_a[0],
+                    self._profile_a[1],
+                    self._profile_b[0],
+                    self._profile_b[1],
                     P.cm_to_m(self._profile_wide_cm),
                 )
             # Marks only while Profile is engaged (hidden under Density).
             plan.overlay.set_profile_corridor(poly, a=a, b=b)
         if engaged and ready:
             # LONG = dominant Plan axis; TRANS = the other Plan axis (same ticks).
-            long_ax = 'x'
-            trans_ax = 'y'
+            long_ax = "x"
+            trans_ax = "y"
             spec = self._profile_spec()
             if spec is not None:
-                long_ax = P.long_plan_axis(spec['frame'])
-                trans_ax = P.trans_plan_axis(spec['frame'])
+                long_ax = P.long_plan_axis(spec["frame"])
+                trans_ax = P.trans_plan_axis(spec["frame"])
             long_lab = long_ax.upper()
             trans_lab = trans_ax.upper()
             if longp is not None:
-                longp._title_lab.setText('Longitudinal · %s / Z' % long_lab)
+                longp._title_lab.setText("Longitudinal · %s / Z" % long_lab)
                 longp.h_axis = long_ax
                 longp.h_label = long_lab
                 longp.overlay.h_axis = long_ax
                 longp.overlay.h_label = long_lab
             if transp is not None:
-                transp._title_lab.setText('Transversal · %s / Z' % trans_lab)
+                transp._title_lab.setText("Transversal · %s / Z" % trans_lab)
                 transp.h_axis = trans_ax
                 transp.h_label = trans_lab
                 transp.overlay.h_axis = trans_ax
                 transp.overlay.h_label = trans_lab
         else:
             if longp is not None:
-                longp._title_lab.setText('Longitudinal · X / Z')
-                longp.h_axis = 'x'
-                longp.h_label = 'X'
-                longp.overlay.h_axis = 'x'
-                longp.overlay.h_label = 'X'
+                longp._title_lab.setText("Longitudinal · X / Z")
+                longp.h_axis = "x"
+                longp.h_label = "X"
+                longp.overlay.h_axis = "x"
+                longp.overlay.h_label = "X"
             if transp is not None:
-                transp._title_lab.setText('Transversal · Y / Z')
-                transp.h_axis = 'y'
-                transp.h_label = 'Y'
-                transp.overlay.h_axis = 'y'
-                transp.overlay.h_label = 'Y'
+                transp._title_lab.setText("Transversal · Y / Z")
+                transp.h_axis = "y"
+                transp.h_label = "Y"
+                transp.overlay.h_axis = "y"
+                transp.overlay.h_label = "Y"
         for pane in (longp, transp, plan):
-            if pane is not None and getattr(pane, 'overlay', None) is not None:
+            if pane is not None and getattr(pane, "overlay", None) is not None:
                 pane.overlay.update()
 
     def _clear_profile_endpoints(self):
@@ -4526,10 +5479,10 @@ class ARSYSDock(QMainWindow):
         self._profile_a = None
         self._profile_b = None
         for sp in (
-            getattr(self, 'spn_profile_ax', None),
-            getattr(self, 'spn_profile_ay', None),
-            getattr(self, 'spn_profile_bx', None),
-            getattr(self, 'spn_profile_by', None),
+            getattr(self, "spn_profile_ax", None),
+            getattr(self, "spn_profile_ay", None),
+            getattr(self, "spn_profile_bx", None),
+            getattr(self, "spn_profile_by", None),
         ):
             if sp is None:
                 continue
@@ -4541,11 +5494,11 @@ class ARSYSDock(QMainWindow):
     def _reset_profile_autostretch(self):
         """Drop auto Stretch Z from a previous profile."""
         self._profile_autostretch_key = None
-        if not getattr(self, '_profile_stretch_auto', False):
+        if not getattr(self, "_profile_stretch_auto", False):
             return
         self._profile_stretch_auto = False
-        chk = getattr(self, 'chk_z_stretch', None)
-        spn = getattr(self, 'spn_z_stretch', None)
+        chk = getattr(self, "chk_z_stretch", None)
+        spn = getattr(self, "spn_z_stretch", None)
         if chk is not None:
             chk.blockSignals(True)
             chk.setChecked(False)
@@ -4576,32 +5529,35 @@ class ARSYSDock(QMainWindow):
         self._profile_turn_density_off()
         # Empty section panes (do NOT flash site-wide XZ/YZ).
         for lyr in (
-            getattr(self, 'long_layer', None),
-            getattr(self, 'trans_layer', None),
-            getattr(self, 'long_line_layer', None),
-            getattr(self, 'trans_line_layer', None),
+            getattr(self, "long_layer", None),
+            getattr(self, "trans_layer", None),
+            getattr(self, "long_line_layer", None),
+            getattr(self, "trans_line_layer", None),
         ):
             L.clear_section(lyr)
         self._update_profile_ui()
         self._apply_profile_visuals()
         self._refresh_canvases()
         if self.source is not None:
-            self._start_profile_pick('A')
+            self._start_profile_pick("A")
         else:
-            self._update_profile_status('Load data first, then New Profile.')
+            self._update_profile_status("Load data first, then New Profile.")
 
     def _drop_plugin_layers(self, keep_source=None):
         self._drop_density_layers()
         for lyr in (
-            self.long_layer, self.trans_layer,
-            self.line_layer, self.long_line_layer, self.trans_line_layer,
+            self.long_layer,
+            self.trans_layer,
+            self.line_layer,
+            self.long_line_layer,
+            self.trans_line_layer,
         ):
             L.release_private(lyr)
         src = self.source
         if (
             src is not None
             and src is not keep_source
-            and src.customProperty('arsysplotqgis') == 'source'
+            and src.customProperty("arsysplotqgis") == "source"
         ):
             L.release_private(src)
         self.long_layer = None
@@ -4614,59 +5570,72 @@ class ARSYSDock(QMainWindow):
         self._drop_plugin_layers(keep_source=layer)
         L.clear_plugin_legend()
         self.source = layer
-        if getattr(self, 'btn_to_qgis', None) is not None:
+        if getattr(self, "btn_to_qgis", None) is not None:
             self.btn_to_qgis.setEnabled(layer is not None and layer.isValid())
         # New data: drop any previous profile.
         self.clear_profile(rebuild=False)
-        if layer.customProperty('arsysplotqgis') == 'source':
+        if layer.customProperty("arsysplotqgis") == "source":
             L.keep_private(layer)
         style = style or {}
-        self._imported_cmap = dict(style.get('cmap') or {})
-        if style.get('field'):
-            self.group_field = style['field']
+        self._imported_cmap = dict(style.get("cmap") or {})
+        if style.get("field"):
+            self.group_field = style["field"]
         else:
             self.group_field = L.guess_group_field(layer)
-        imported_size = style.get('size')
+        imported_size = style.get("size")
         if imported_size:
-            self.point_size = max(0.0, min(3.0, float(imported_size)))
-            slider = max(0, min(30, int(round(self.point_size * 10))))
+            self.point_size = max(0.0, min(10.0, float(imported_size)))
+            slider = max(0, min(1000, int(round(self.point_size * 100.0))))
             self.sld_size.blockSignals(True)
             self.sld_size.setValue(slider)
             self.sld_size.blockSignals(False)
-            self.lbl_size.setText('%.1f mm' % self.point_size)
-        self.long_layer = L.make_section_layer(layer.name() + ' · XZ', layer.crs(), layer.fields())
-        self.trans_layer = L.make_section_layer(layer.name() + ' · YZ', layer.crs(), layer.fields())
-        self.line_layer = L.make_line_layer(layer.name() + ' · vec', layer.crs(), layer.fields())
+            self.lbl_size.setText("%.2f mm" % self.point_size)
+        self.long_layer = L.make_section_layer(
+            layer.name() + " · XZ", layer.crs(), layer.fields()
+        )
+        self.trans_layer = L.make_section_layer(
+            layer.name() + " · YZ", layer.crs(), layer.fields()
+        )
+        self.line_layer = L.make_line_layer(
+            layer.name() + " · vec", layer.crs(), layer.fields()
+        )
         self.long_line_layer = L.make_section_line_layer(
-            layer.name() + ' · XZ vec', layer.crs(), layer.fields()
+            layer.name() + " · XZ vec", layer.crs(), layer.fields()
         )
         self.trans_line_layer = L.make_section_line_layer(
-            layer.name() + ' · YZ vec', layer.crs(), layer.fields()
+            layer.name() + " · YZ vec", layer.crs(), layer.fields()
         )
         for lyr in (
-            self.long_layer, self.trans_layer,
-            self.line_layer, self.long_line_layer, self.trans_line_layer,
+            self.long_layer,
+            self.trans_layer,
+            self.line_layer,
+            self.long_line_layer,
+            self.trans_line_layer,
         ):
             L.keep_private(lyr)
-        self.display_mode = 'points'
+        self.display_mode = "points"
         self._user_picked_draw = False
         self.btn_draw_points.setChecked(True)
         self.lbl_file.setText(label)
         self.btn_3d.setEnabled(True)
         self.btn_reset.setEnabled(True)
-        if getattr(self, 'btn_redraw', None) is not None:
+        if getattr(self, "btn_measure", None) is not None:
+            self.btn_measure.setEnabled(True)
+        if getattr(self, "btn_recalc_angles", None) is not None:
+            self.btn_recalc_angles.setEnabled(True)
+        if getattr(self, "btn_redraw", None) is not None:
             self.btn_redraw.setEnabled(True)
-        if getattr(self, 'btn_to_qgis', None) is not None:
+        if getattr(self, "btn_to_qgis", None) is not None:
             self.btn_to_qgis.setEnabled(True)
         self._sync_density_controls()
         self._update_profile_ui()
         # If Options already sits on Density, build the surface for the new data.
-        tabs = getattr(self, 'opt_tabs', None)
+        tabs = getattr(self, "opt_tabs", None)
         if tabs is not None:
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-                if str(tabs.tabText(tabs.currentIndex()) or '') == 'Density':
+                if str(tabs.tabText(tabs.currentIndex()) or "") == "Density":
                     self._engage_density_mode()
-        if getattr(self, 'chk_point_info', None) is not None:
+        if getattr(self, "chk_point_info", None) is not None:
             self.chk_point_info.setEnabled(True)
             self.chk_point_info_large.setEnabled(bool(self.chk_point_info.isChecked()))
         self._set_find_enabled(True)
@@ -4677,15 +5646,18 @@ class ARSYSDock(QMainWindow):
         self._set_all_groups(True)
         self._apply_filters_now()
         self.plan.show_layer(
-            self._pane_layers(self.plan), adaptive=True,
+            self._pane_layers(self.plan),
+            adaptive=True,
             fit_from=self._pane_fit_layers(self.plan),
         )
         self.longp.show_layer(
-            self._pane_layers(self.longp), adaptive=True,
+            self._pane_layers(self.longp),
+            adaptive=True,
             fit_from=self._pane_fit_layers(self.longp),
         )
         self.transp.show_layer(
-            self._pane_layers(self.transp), adaptive=True,
+            self._pane_layers(self.transp),
+            adaptive=True,
             fit_from=self._pane_fit_layers(self.transp),
         )
         self._capture_home_extents()
@@ -4709,8 +5681,11 @@ class ARSYSDock(QMainWindow):
         self._set_all_groups(True)
         if self.line_layer is not None:
             L.style_lines_by_group(
-                self.line_layer, self.group_field,
-                width=self._line_width(), head=self.arrow_size, cmap=self.colors,
+                self.line_layer,
+                self.group_field,
+                width=self._line_width(),
+                head=self.arrow_size,
+                cmap=self.colors,
             )
             L.copy_renderer(self.line_layer, self.long_line_layer)
             L.copy_renderer(self.line_layer, self.trans_line_layer)
@@ -4718,7 +5693,7 @@ class ARSYSDock(QMainWindow):
 
     def _style_maps(self):
         """Colour / shape maps from the loaded book for the active group field."""
-        book = getattr(self, '_style_book', None)
+        book = getattr(self, "_style_book", None)
         if not book:
             return {}, {}
         return SF.maps_for_field(book, self.group_field)
@@ -4730,37 +5705,42 @@ class ARSYSDock(QMainWindow):
         if values is None:
             values = (
                 list(self._group_btns)
-                if getattr(self, '_group_btns', None)
+                if getattr(self, "_group_btns", None)
                 else L.unique_groups(self.source, self.group_field)
             )
         style_cmap, style_shapes = self._style_maps()
         self._style_shapes = dict(style_shapes)
-        cmap_base = dict(getattr(self, '_imported_cmap', None) or {})
+        cmap_base = dict(getattr(self, "_imported_cmap", None) or {})
         cmap_base.update(style_cmap)
         self.colors = L.style_by_group(
-            self.source, self.group_field, size=self.point_size,
-            values=values, cmap=cmap_base or None,
+            self.source,
+            self.group_field,
+            size=self.point_size,
+            values=values,
+            cmap=cmap_base or None,
             shape=self._point_shape(),
             shapes=style_shapes or None,
         )
+        # style_by_group writes paper mm; soften glyphs for the live canvases.
+        self._apply_point_sizes(for_paper=False)
 
     def load_style_file(self):
         start = PLUGIN_DIR
-        book = getattr(self, '_style_book', None)
-        if book and book.get('path'):
-            start = os.path.dirname(book['path']) or PLUGIN_DIR
+        book = getattr(self, "_style_book", None)
+        if book and book.get("path"):
+            start = os.path.dirname(book["path"]) or PLUGIN_DIR
         path, _flt = QFileDialog.getOpenFileName(
             self,
-            'Load group style',
+            "Load group colours",
             start,
-            'Style text (*.txt *.style *.csv);;All files (*)',
+            "Group colours (*.colors);;Text (*.txt);;All files (*)",
         )
         if not path:
             return
         try:
             book = SF.load_style_file(path)
         except (OSError, UnicodeError, ValueError, TypeError) as exc:
-            QMessageBox.warning(self, 'Style', str(exc))
+            QMessageBox.warning(self, "Style", str(exc))
             return
         self._style_book = book
         self.btn_style_clear.setEnabled(True)
@@ -4769,22 +5749,26 @@ class ARSYSDock(QMainWindow):
             self._set_all_groups(True)
             if self.line_layer is not None:
                 L.style_lines_by_group(
-                    self.line_layer, self.group_field,
-                    width=self._line_width(), head=self.arrow_size, cmap=self.colors,
+                    self.line_layer,
+                    self.group_field,
+                    width=self._line_width(),
+                    head=self.arrow_size,
+                    cmap=self.colors,
                 )
                 L.copy_renderer(self.line_layer, self.long_line_layer)
                 L.copy_renderer(self.line_layer, self.trans_line_layer)
             self.schedule_filter()
         msg = SF.summary_message(book, self.group_field if self.source else None)
-        warns = list(book.get('warnings') or [])
-        self.iface.messageBar().pushInfo('ARSYSplotQGIS', msg)
+        warns = list(book.get("warnings") or [])
+        self.iface.messageBar().pushInfo("ARSYSplotQGIS", msg)
         if warns:
-            preview = '\n'.join(warns[:12])
+            preview = "\n".join(warns[:12])
             if len(warns) > 12:
-                preview += '\n… (%d more)' % (len(warns) - 12)
+                preview += "\n… (%d more)" % (len(warns) - 12)
             QMessageBox.information(
-                self, 'Style warnings',
-                '%s\n\n%s' % (msg, preview),
+                self,
+                "Style warnings",
+                "%s\n\n%s" % (msg, preview),
             )
 
     def clear_style_file(self):
@@ -4797,13 +5781,16 @@ class ARSYSDock(QMainWindow):
         self._set_all_groups(True)
         if self.line_layer is not None:
             L.style_lines_by_group(
-                self.line_layer, self.group_field,
-                width=self._line_width(), head=self.arrow_size, cmap=self.colors,
+                self.line_layer,
+                self.group_field,
+                width=self._line_width(),
+                head=self.arrow_size,
+                cmap=self.colors,
             )
             L.copy_renderer(self.line_layer, self.long_line_layer)
             L.copy_renderer(self.line_layer, self.trans_line_layer)
         self.schedule_filter()
-        self.iface.messageBar().pushInfo('ARSYSplotQGIS', 'Style cleared.')
+        self.iface.messageBar().pushInfo("ARSYSplotQGIS", "Style cleared.")
 
     def _rebuild_group_buttons(self):
         while self.group_layout.count():
@@ -4812,6 +5799,9 @@ class ARSYSDock(QMainWindow):
             if w:
                 w.deleteLater()
         if not self.source:
+            self._group_btns = {}
+            self.active_groups = set()
+            self._sync_zoom_controls(rebuild_chips=True)
             return
         values = L.unique_groups(self.source, self.group_field)
         self._restyle_points(values)
@@ -4821,20 +5811,20 @@ class ARSYSDock(QMainWindow):
             btn.setCheckable(True)
             btn.setChecked(True)
             tip = val
-            sh = (getattr(self, '_style_shapes', None) or {}).get(val)
+            sh = (getattr(self, "_style_shapes", None) or {}).get(val)
             if sh:
-                tip = '%s · %s' % (val, sh)
+                tip = "%s · %s" % (val, sh)
             btn.setToolTip(L.html_tooltip(tip))
             # Width follows the label; FlowLayout wraps chips across rows.
             btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-            color = self.colors.get(val, QColor('#888'))
+            color = self.colors.get(val, QColor("#888"))
             hexcol = css_hex(color)
             btn.setStyleSheet(
-                'QPushButton { background:%s; color:#fff; text-align:center;'
-                '  font-size:10px; padding:1px 6px; border-radius:3px;'
-                '  min-height:16px; max-height:18px; }'
-                'QPushButton:checked { background:%s; }'
-                'QPushButton:!checked { background:#5a554e; color:#c8c2b8; }'
+                "QPushButton { background:%s; color:#fff; text-align:center;"
+                "  font-size:10px; padding:1px 6px; border-radius:3px;"
+                "  min-height:16px; max-height:18px; }"
+                "QPushButton:checked { background:%s; }"
+                "QPushButton:!checked { background:#5a554e; color:#c8c2b8; }"
                 % (hexcol, hexcol)
             )
             btn.adjustSize()
@@ -4843,11 +5833,13 @@ class ARSYSDock(QMainWindow):
             self._group_btns[val] = btn
         self.active_groups = set(values)
         QTimer.singleShot(0, self._fit_group_chip_area)
+        self._sync_measure_stroke()
+        self._sync_zoom_controls(rebuild_chips=True)
 
     def _fit_group_chip_area(self):
         """Shrink/grow the Group chip scroll to the wrapped chip height (capped)."""
-        scroll = getattr(self, '_group_scroll', None)
-        wrap = getattr(self, 'group_wrap', None)
+        scroll = getattr(self, "_group_scroll", None)
+        wrap = getattr(self, "group_wrap", None)
         if scroll is None or wrap is None:
             return
         vw = scroll.viewport().width() if scroll.viewport() else 0
@@ -4858,14 +5850,14 @@ class ARSYSDock(QMainWindow):
             need = int(wrap.heightForWidth(w))
         else:
             need = int(wrap.sizeHint().height())
-        n_btns = len(getattr(self, '_group_btns', {}) or {})
+        n_btns = len(getattr(self, "_group_btns", {}) or {})
         if n_btns < 1:
             need = 28
         need = max(28, need + 2)
         # Soft cap: leave room for Options; at most ~38% of the side column.
         side_h = 0
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-            side = getattr(self, '_side', None)
+            side = getattr(self, "_side", None)
             if side is not None:
                 side_h = int(side.height())
         cap = 220
@@ -4878,7 +5870,7 @@ class ARSYSDock(QMainWindow):
             if need > cap
             else Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
-        gbox = getattr(self, '_group_box', None)
+        gbox = getattr(self, "_group_box", None)
         if gbox is not None:
             gbox.updateGeometry()
 
@@ -4895,25 +5887,29 @@ class ARSYSDock(QMainWindow):
             self.active_groups.add(val)
         else:
             self.active_groups.discard(val)
+        self._sync_measure_stroke()
         self.schedule_filter()
+        self._sync_zoom_controls(rebuild_chips=False)
 
     def _set_all_groups(self, on):
-        if not getattr(self, '_group_btns', None):
+        if not getattr(self, "_group_btns", None):
             return
         for val, btn in self._group_btns.items():
             btn.blockSignals(True)
             btn.setChecked(on)
             btn.blockSignals(False)
         self.active_groups = set(self._group_btns) if on else set()
+        self._sync_measure_stroke()
         self.schedule_filter()
+        self._sync_zoom_controls(rebuild_chips=False)
 
     def _reset_range_bounds(self):
         if not self.source:
             return
         ext = L.xyz_extent(self.source)
-        self.rng_x.set_bounds(*ext['x'])
-        self.rng_y.set_bounds(*ext['y'])
-        self.rng_z.set_bounds(*ext['z'])
+        self.rng_x.set_bounds(*ext["x"])
+        self.rng_y.set_bounds(*ext["y"])
+        self.rng_z.set_bounds(*ext["z"])
 
     def reset_ranges(self):
         self.rng_x.reset(notify=False)
@@ -4936,24 +5932,48 @@ class ARSYSDock(QMainWindow):
         self.chk_adaptive.blockSignals(True)
         self.chk_adaptive.setChecked(False)
         self.chk_adaptive.blockSignals(False)
+        self.z_step = None
+        if getattr(self, "cmb_z_step", None) is not None:
+            self.cmb_z_step.blockSignals(True)
+            self.cmb_z_step.setCurrentIndex(0)  # Auto
+            self.cmb_z_step.blockSignals(False)
+            self._apply_z_step()
         self.sld_size.blockSignals(True)
-        self.sld_size.setValue(22)
+        self.sld_size.setValue(220)
         self.sld_size.blockSignals(False)
         self.point_size = 2.2
-        self.lbl_size.setText('2.2 mm')
+        self.lbl_size.setText("2.20 mm")
+        self._point_screen_dpi = None
+        if getattr(self, "cmb_point_dpi", None) is not None:
+            self.cmb_point_dpi.blockSignals(True)
+            self.cmb_point_dpi.setCurrentIndex(0)  # Auto
+            self.cmb_point_dpi.blockSignals(False)
         self.sld_arrow.blockSignals(True)
         self.sld_arrow.setValue(L.arrow_slider_from_mm(L.ARROW_MM_DEFAULT))
         self.sld_arrow.blockSignals(False)
         self.arrow_size = L.ARROW_MM_DEFAULT
-        self.lbl_arrow.setText('%.2f mm' % self.arrow_size)
-        self._select_draw_mode('points')
+        self.lbl_arrow.setText("%.2f mm" % self.arrow_size)
+        self.vector_fixed = False
+        self.vector_len_cm = L.VECTOR_LEN_CM_DEFAULT
+        if getattr(self, "chk_vector_fixed", None) is not None:
+            self.chk_vector_fixed.blockSignals(True)
+            self.chk_vector_fixed.setChecked(False)
+            self.chk_vector_fixed.blockSignals(False)
+        if getattr(self, "spn_vector_len", None) is not None:
+            self.spn_vector_len.blockSignals(True)
+            self.spn_vector_len.setValue(L.VECTOR_LEN_CM_DEFAULT)
+            self.spn_vector_len.setEnabled(False)
+            self.spn_vector_len.blockSignals(False)
+        self._select_draw_mode("points")
         self._user_picked_draw = False
-        if getattr(self, '_group_btns', None):
+        if getattr(self, "_group_btns", None):
             for btn in self._group_btns.values():
                 btn.blockSignals(True)
                 btn.setChecked(True)
                 btn.blockSignals(False)
             self.active_groups = set(self._group_btns)
+        self._sync_zoom_controls(rebuild_chips=False)
+        self._clear_measure()
         self.reset_ranges()
         self._restyle_points()
         self._apply_filters_now()
@@ -4964,15 +5984,18 @@ class ARSYSDock(QMainWindow):
         self._capture_home_extents()
         QTimer.singleShot(0, self._fit_main_views)
         QTimer.singleShot(0, self._capture_home_extents)
-        for win in list(getattr(self, '_zoom_windows', {}).values()):
+        for win in list(getattr(self, "_zoom_windows", {}).values()):
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 if win.isVisible() and win._layer is not None:
                     win._fit()
-        for dlg in list(getattr(self.iface, '_arsysplotqgis_3d', [])):
+                if hasattr(win, "_clear_measure"):
+                    win._clear_measure()
+        for dlg in list(getattr(self.iface, "_arsysplotqgis_3d", [])):
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 if dlg.isVisible():
                     dlg.reload(
-                        self.group_field, keep_camera=False,
+                        self.group_field,
+                        keep_camera=False,
                         display_mode=self._draw_mode_for_3d(),
                         arrow_size=self.arrow_size,
                     )
@@ -4995,12 +6018,12 @@ class ARSYSDock(QMainWindow):
             return None
         key, _pts = self._pane_key_and_points(pane)
         xyz = L.xyz_extent(self.source)
-        if key == 'plan':
-            (x0, x1), (y0, y1) = xyz['x'], xyz['y']
-        elif key == 'long':
-            (x0, x1), (y0, y1) = xyz['x'], xyz['z']
-        elif key == 'trans':
-            (x0, x1), (y0, y1) = xyz['y'], xyz['z']
+        if key == "plan":
+            (x0, x1), (y0, y1) = xyz["x"], xyz["y"]
+        elif key == "long":
+            (x0, x1), (y0, y1) = xyz["x"], xyz["z"]
+        elif key == "trans":
+            (x0, x1), (y0, y1) = xyz["y"], xyz["z"]
         else:
             return None
         return L._pad_rect(QgsRectangle(float(x0), float(y0), float(x1), float(y1)))
@@ -5020,7 +6043,7 @@ class ARSYSDock(QMainWindow):
                 continue
             ext = self._full_pane_extent(pane)
             if ext is None or ext.isEmpty():
-                cur = getattr(pane.canvas, '_data_ext', None)
+                cur = getattr(pane.canvas, "_data_ext", None)
                 if cur is not None and not cur.isEmpty():
                     ext = QgsRectangle(cur)
             if ext is not None and not ext.isEmpty():
@@ -5053,8 +6076,7 @@ class ARSYSDock(QMainWindow):
             ext = L.padded_data_extent(fit_from)
             if ext is None or ext.isEmpty():
                 ext = L.padded_data_extent(
-                    [lyr for lyr in (fit_from or []) if lyr is not None]
-                    or layers
+                    [lyr for lyr in (fit_from or []) if lyr is not None] or layers
                 )
             if ext is None or ext.isEmpty():
                 ext = L.union_extent(layers)
@@ -5100,6 +6122,33 @@ class ARSYSDock(QMainWindow):
         self.axis_grid = bool(on)
         self._apply_grid_options()
 
+    def _on_z_step(self, _index=None):
+        cmb = getattr(self, "cmb_z_step", None)
+        if cmb is None:
+            return
+        self.z_step = cmb.currentData()
+        self._apply_z_step()
+
+    def _apply_z_step(self):
+        step = getattr(self, "z_step", None)
+        panes = []
+        for name in ("plan", "longp", "transp"):
+            pane = getattr(self, name, None)
+            if pane is not None:
+                panes.append(pane)
+        for win in (getattr(self, "_zoom_windows", None) or {}).values():
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                panes.append(win.pane)
+        for pane in panes:
+            ov = getattr(pane, "overlay", None)
+            if ov is None:
+                continue
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                if getattr(pane, "v_axis", None) == "z":
+                    ov.set_z_step(step)
+                else:
+                    ov.set_z_step(None)
+
     def _on_square_grid_toggled(self, on):
         self.chk_square_grid._user_set = True
         if on:
@@ -5113,10 +6162,12 @@ class ARSYSDock(QMainWindow):
                 self.chk_square_grid.blockSignals(False)
                 self.square_grid = False
                 self.chk_square_grid.setEnabled(False)
-                self.chk_square_grid.setToolTip(L.html_tooltip(
-                    '**Archeo** grid unavailable: no usable **quadre** field, or the values do not match the metre coordinates.',
-                    'Turn this on when the data include valid excavation squares (e.g. R16).',
-                ))
+                self.chk_square_grid.setToolTip(
+                    L.html_tooltip(
+                        "**Archeo** grid unavailable: no usable **quadre** field, or the values do not match the metre coordinates.",
+                        "Turn this on when the data include valid excavation squares (e.g. R16).",
+                    )
+                )
                 self._apply_grid_options()
                 return
             self.chk_square_grid.setEnabled(True)
@@ -5126,33 +6177,33 @@ class ARSYSDock(QMainWindow):
     def _refresh_quadre_formatters(self):
         """Rebuild letter/number formatters from the source ``quadre`` field."""
         has_data = self.source is not None
-        self._quadre_fmt = (
-            QG.formatters_from_layer(self.source) if has_data else None
-        )
+        self._quadre_fmt = QG.formatters_from_layer(self.source) if has_data else None
         letters = self._quadre_fmt is not None
-        if getattr(self, 'chk_axis_grid', None) is not None:
+        if getattr(self, "chk_axis_grid", None) is not None:
             self.chk_axis_grid.setEnabled(has_data)
+        if getattr(self, "cmb_z_step", None) is not None:
+            self.cmb_z_step.setEnabled(has_data)
             if has_data:
-                if not getattr(self.chk_axis_grid, '_user_set', False):
+                if not getattr(self.chk_axis_grid, "_user_set", False):
                     self.chk_axis_grid.blockSignals(True)
                     self.chk_axis_grid.setChecked(True)
                     self.chk_axis_grid.blockSignals(False)
                 self.axis_grid = bool(self.chk_axis_grid.isChecked())
             else:
                 self.axis_grid = True
-        if getattr(self, 'chk_square_grid', None) is not None:
-            want = bool(getattr(self.chk_square_grid, '_user_set', False)) and (
+        if getattr(self, "chk_square_grid", None) is not None:
+            want = bool(getattr(self.chk_square_grid, "_user_set", False)) and (
                 self.chk_square_grid.isChecked()
             )
             self.chk_square_grid.setEnabled(has_data and letters)
             tip = L.html_tooltip(
-                '**Archaeological squares** from the **quadre** field (e.g. R16): letter on Y, number on X, at cell centres.',
-                'Needs a valid quadre that matches the metre coordinates. Not the metric metre grid (**Axis**).',
+                "**Archaeological squares** from the **quadre** field (e.g. R16): letter on Y, number on X, at cell centres.",
+                "Needs a valid quadre that matches the metre coordinates. Not the metric metre grid (**Axis**).",
             )
             if not letters:
                 tip = L.html_tooltip(
-                    '**Archeo** grid unavailable: no usable **quadre** field, or the values do not match the metre coordinates.',
-                    'Turn this on when the data include valid excavation squares (e.g. R16).',
+                    "**Archeo** grid unavailable: no usable **quadre** field, or the values do not match the metre coordinates.",
+                    "Turn this on when the data include valid excavation squares (e.g. R16).",
                 )
                 self.chk_square_grid.blockSignals(True)
                 self.chk_square_grid.setChecked(False)
@@ -5170,15 +6221,15 @@ class ARSYSDock(QMainWindow):
     def _apply_grid_options(self):
         use_square = bool(self.square_grid) and self._quadre_fmt is not None
         panes = []
-        for name in ('plan', 'longp', 'transp'):
+        for name in ("plan", "longp", "transp"):
             pane = getattr(self, name, None)
             if pane is not None:
                 panes.append(pane)
-        for win in (getattr(self, '_zoom_windows', None) or {}).values():
+        for win in (getattr(self, "_zoom_windows", None) or {}).values():
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 panes.append(win.pane)
         for pane in panes:
-            ov = getattr(pane, 'overlay', None)
+            ov = getattr(pane, "overlay", None)
             if ov is None:
                 continue
             # Separate calls so one failure does not skip square-grid / formatters.
@@ -5190,55 +6241,85 @@ class ARSYSDock(QMainWindow):
                 ov.set_quadre_formatters(self._quadre_fmt)
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 ov.update()
+        self._apply_z_step()
 
     def _apply_filters_now(self):
         if not self.source:
             return
         ranges = {
-            'x': self.rng_x.values(),
-            'y': self.rng_y.values(),
-            'z': self.rng_z.values(),
+            "x": self.rng_x.values(),
+            "y": self.rng_y.values(),
+            "z": self.rng_z.values(),
         }
         groups = self.active_groups
-        if not getattr(self, '_group_btns', None):
+        if not getattr(self, "_group_btns", None):
             groups = None
         L.apply_subset(self.source, groups, ranges, self.group_field)
         self._clear_cross_hover()
-        if getattr(self, '_group_btns', None) and self.colors:
+        if getattr(self, "_group_btns", None) and self.colors:
             self._restyle_points(list(self._group_btns))
         z_s = self._z_stretch()
         prof = self._profile_spec()
-        if getattr(self, '_profile_engaged', False) and prof is None:
+        if getattr(self, "_profile_engaged", False) and prof is None:
             L.clear_section(self.long_layer)
             L.clear_section(self.trans_layer)
             L.clear_section(self.long_line_layer)
             L.clear_section(self.trans_line_layer)
         else:
             L.rebuild_section(
-                self.source, self.long_layer, 'long',
-                z_stretch=z_s, profile=prof,
+                self.source,
+                self.long_layer,
+                "long",
+                z_stretch=z_s,
+                profile=prof,
             )
             L.rebuild_section(
-                self.source, self.trans_layer, 'trans',
-                z_stretch=z_s, profile=prof,
+                self.source,
+                self.trans_layer,
+                "trans",
+                z_stretch=z_s,
+                profile=prof,
             )
         L.copy_renderer(self.source, self.long_layer)
         L.copy_renderer(self.source, self.trans_layer)
-        nvec = L.rebuild_vectors(self.source, self.line_layer)
-        if not (getattr(self, '_profile_engaged', False) and prof is None):
+        vec_fixed = bool(getattr(self, "vector_fixed", False))
+        vec_cm = float(
+            getattr(self, "vector_len_cm", L.VECTOR_LEN_CM_DEFAULT)
+            or L.VECTOR_LEN_CM_DEFAULT
+        )
+        nvec = L.rebuild_vectors(
+            self.source,
+            self.line_layer,
+            fixed=vec_fixed,
+            fixed_cm=vec_cm,
+        )
+        if not (getattr(self, "_profile_engaged", False) and prof is None):
             L.rebuild_section_lines(
-                self.source, self.long_line_layer, 'long',
-                z_stretch=z_s, profile=prof,
+                self.source,
+                self.long_line_layer,
+                "long",
+                z_stretch=z_s,
+                profile=prof,
+                fixed=vec_fixed,
+                fixed_cm=vec_cm,
             )
             L.rebuild_section_lines(
-                self.source, self.trans_line_layer, 'trans',
-                z_stretch=z_s, profile=prof,
+                self.source,
+                self.trans_line_layer,
+                "trans",
+                z_stretch=z_s,
+                profile=prof,
+                fixed=vec_fixed,
+                fixed_cm=vec_cm,
             )
         L.style_lines_by_group(
-            self.line_layer, self.group_field,
+            self.line_layer,
+            self.group_field,
             width=self._line_width(),
             head=self.arrow_size,
-            values=list(self._group_btns) if getattr(self, '_group_btns', None) else None,
+            values=list(self._group_btns)
+            if getattr(self, "_group_btns", None)
+            else None,
             cmap=self.colors,
         )
         L.copy_renderer(self.line_layer, self.long_line_layer)
@@ -5246,16 +6327,19 @@ class ARSYSDock(QMainWindow):
         self._sync_draw_buttons()
         vis = self.source.featureCount()
         total = self.source.dataProvider().featureCount()
-        self.lbl_count.setText('%d / %d points · %d vectors' % (vis, total, nvec))
+        self.lbl_count.setText("%d / %d points · %d vectors" % (vis, total, nvec))
         if self.density_on:
             if not self._dens_params_user:
                 self._auto_density_params(rebuild=False)
             self._rebuild_density(refresh=False)
         self._refresh_canvases()
         view3d.refresh_open_views(
-            self.iface, self.source, self.group_field,
+            self.iface,
+            self.source,
+            self.group_field,
             display_mode=self._draw_mode_for_3d(),
             arrow_size=self.arrow_size,
+            **self._vector_draw_kwargs(),
         )
         self._sync_z_stretch_overlays()
         if prof is not None:
@@ -5267,7 +6351,8 @@ class ARSYSDock(QMainWindow):
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             src_id = self.source.id() if self.source is not None else None
         return (
-            a, b,
+            a,
+            b,
             round(float(self._profile_wide_cm or 0.0), 3),
             src_id,
         )
@@ -5281,14 +6366,14 @@ class ARSYSDock(QMainWindow):
         panes; re-apply when the profile / file changes (may lower a leftover
         high factor from a previous profile).
         """
-        if getattr(self, '_profile_autostretch_busy', False):
+        if getattr(self, "_profile_autostretch_busy", False):
             return
         if not self._profile_is_ready():
             return
         token = self._profile_autostretch_token()
-        if token == getattr(self, '_profile_autostretch_key', None):
+        if token == getattr(self, "_profile_autostretch_key", None):
             return
-        long_lyr = getattr(self, 'long_layer', None)
+        long_lyr = getattr(self, "long_layer", None)
         if long_lyr is None or not long_lyr.isValid() or long_lyr.featureCount() < 1:
             return
         long_ext = L.feature_extent(long_lyr)
@@ -5303,9 +6388,10 @@ class ARSYSDock(QMainWindow):
         # Cap for TRANS: other plan axis ≈ profile Wide (cm). Keep
         # z_disp / trans_w from exploding (fly column).
         trans_w = P.cm_to_m(self._profile_wide_cm) or 0.1
-        trans_lyr = getattr(self, 'trans_layer', None)
+        trans_lyr = getattr(self, "trans_layer", None)
         if (
-            trans_lyr is not None and trans_lyr.isValid()
+            trans_lyr is not None
+            and trans_lyr.isValid()
             and trans_lyr.featureCount() > 0
         ):
             t_ext = L.feature_extent(trans_lyr)
@@ -5324,16 +6410,16 @@ class ARSYSDock(QMainWindow):
             self._profile_autostretch_key = token
             return
         # Do not lower a user-chosen stretch unless we set it ourselves.
-        if needed < cur and not getattr(self, '_profile_stretch_auto', False):
+        if needed < cur and not getattr(self, "_profile_stretch_auto", False):
             self._profile_autostretch_key = token
             return
         self._profile_autostretch_key = token
         self._profile_autostretch_busy = True
         try:
-            chk = getattr(self, 'chk_z_stretch', None)
-            spn = getattr(self, 'spn_z_stretch', None)
+            chk = getattr(self, "chk_z_stretch", None)
+            spn = getattr(self, "spn_z_stretch", None)
             if needed <= 1.05:
-                if getattr(self, '_profile_stretch_auto', False):
+                if getattr(self, "_profile_stretch_auto", False):
                     if chk is not None:
                         chk.blockSignals(True)
                         chk.setChecked(False)
@@ -5363,31 +6449,30 @@ class ARSYSDock(QMainWindow):
             self._rebuild_sections_for_stretch()
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 self.iface.messageBar().pushInfo(
-                    'ARSYSplotQGIS',
-                    'Stretch Z ×%.1f (balanced for LONG and TRANS). '
-                    'Adjust under Resources → Stretch Z if needed.'
-                    % needed,
+                    "ARSYSplotQGIS",
+                    "Stretch Z ×%.1f (balanced for LONG and TRANS). "
+                    "Adjust under Resources → Stretch Z if needed." % needed,
                 )
         finally:
             self._profile_autostretch_busy = False
 
     def _z_stretch(self):
         """Effective Z exaggeration for section panes (1 = isotropic)."""
-        on = bool(getattr(self, 'z_stretch_on', False))
-        if getattr(self, 'chk_z_stretch', None) is not None:
+        on = bool(getattr(self, "z_stretch_on", False))
+        if getattr(self, "chk_z_stretch", None) is not None:
             on = bool(self.chk_z_stretch.isChecked())
         if not on:
             return 1.0
-        spn = getattr(self, 'spn_z_stretch', None)
+        spn = getattr(self, "spn_z_stretch", None)
         if spn is not None:
             return L._clamp_z_stretch(spn.value())
-        return L._clamp_z_stretch(getattr(self, 'z_stretch_factor', 2.0))
+        return L._clamp_z_stretch(getattr(self, "z_stretch_factor", 2.0))
 
     def _sync_z_stretch_overlays(self):
         stretch = self._z_stretch()
         for pane in (
-            getattr(self, 'longp', None),
-            getattr(self, 'transp', None),
+            getattr(self, "longp", None),
+            getattr(self, "transp", None),
         ):
             if pane is None:
                 continue
@@ -5395,18 +6480,18 @@ class ARSYSDock(QMainWindow):
                 pane.overlay.set_z_stretch(stretch)
         # Plan stays isotropic.
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-            if getattr(self, 'plan', None) is not None:
+            if getattr(self, "plan", None) is not None:
                 self.plan.overlay.set_z_stretch(1.0)
-        for win in list(getattr(self, '_zoom_windows', {}).values()):
+        for win in list(getattr(self, "_zoom_windows", {}).values()):
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-                if getattr(win.pane, 'v_axis', None) == 'z':
+                if getattr(win.pane, "v_axis", None) == "z":
                     win.pane.overlay.set_z_stretch(stretch)
                 else:
                     win.pane.overlay.set_z_stretch(1.0)
 
     def _schedule_z_stretch_rebuild(self, delay_ms=180):
         """Debounce Stretch Factor; density rebuild is slow and re-entrant via processEvents."""
-        timer = getattr(self, '_z_stretch_timer', None)
+        timer = getattr(self, "_z_stretch_timer", None)
         if timer is None:
             self._rebuild_sections_for_stretch()
             return
@@ -5420,10 +6505,10 @@ class ARSYSDock(QMainWindow):
         under an in-flight KDE — that leaves density and markers vertically
         separated. Busy+pending keeps one coherent pass, then re-runs if needed.
         """
-        if getattr(self, '_z_stretch_busy', False):
+        if getattr(self, "_z_stretch_busy", False):
             self._z_stretch_pending = True
             return
-        timer = getattr(self, '_z_stretch_timer', None)
+        timer = getattr(self, "_z_stretch_timer", None)
         if timer is not None:
             timer.stop()
         if self.source is None:
@@ -5435,27 +6520,48 @@ class ARSYSDock(QMainWindow):
             # Snapshot stretch for this pass; Factor may change under processEvents.
             z_s = self._z_stretch()
             prof = self._profile_spec()
-            if getattr(self, '_profile_engaged', False) and prof is None:
+            if getattr(self, "_profile_engaged", False) and prof is None:
                 L.clear_section(self.long_layer)
                 L.clear_section(self.trans_layer)
                 L.clear_section(self.long_line_layer)
                 L.clear_section(self.trans_line_layer)
             else:
                 L.rebuild_section(
-                    self.source, self.long_layer, 'long',
-                    z_stretch=z_s, profile=prof,
+                    self.source,
+                    self.long_layer,
+                    "long",
+                    z_stretch=z_s,
+                    profile=prof,
                 )
                 L.rebuild_section(
-                    self.source, self.trans_layer, 'trans',
-                    z_stretch=z_s, profile=prof,
+                    self.source,
+                    self.trans_layer,
+                    "trans",
+                    z_stretch=z_s,
+                    profile=prof,
+                )
+                vec_fixed = bool(getattr(self, "vector_fixed", False))
+                vec_cm = float(
+                    getattr(self, "vector_len_cm", L.VECTOR_LEN_CM_DEFAULT)
+                    or L.VECTOR_LEN_CM_DEFAULT
                 )
                 L.rebuild_section_lines(
-                    self.source, self.long_line_layer, 'long',
-                    z_stretch=z_s, profile=prof,
+                    self.source,
+                    self.long_line_layer,
+                    "long",
+                    z_stretch=z_s,
+                    profile=prof,
+                    fixed=vec_fixed,
+                    fixed_cm=vec_cm,
                 )
                 L.rebuild_section_lines(
-                    self.source, self.trans_line_layer, 'trans',
-                    z_stretch=z_s, profile=prof,
+                    self.source,
+                    self.trans_line_layer,
+                    "trans",
+                    z_stretch=z_s,
+                    profile=prof,
+                    fixed=vec_fixed,
+                    fixed_cm=vec_cm,
                 )
             L.copy_renderer(self.source, self.long_layer)
             L.copy_renderer(self.source, self.trans_layer)
@@ -5463,7 +6569,7 @@ class ARSYSDock(QMainWindow):
             L.copy_renderer(self.line_layer, self.trans_line_layer)
             self._sync_z_stretch_overlays()
             self._clear_cross_hover()
-            dens = getattr(self, '_density_timer', None)
+            dens = getattr(self, "_density_timer", None)
             if dens is not None:
                 dens.stop()
             if self.density_on:
@@ -5474,93 +6580,112 @@ class ARSYSDock(QMainWindow):
             for pane in (self.longp, self.transp):
                 with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                     pane.show_layer(
-                        self._pane_layers(pane), adaptive=True,
+                        self._pane_layers(pane),
+                        adaptive=True,
                         fit_from=self._pane_fit_layers(pane),
                     )
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 adaptive = bool(
-                    getattr(self, 'chk_adaptive', None)
+                    getattr(self, "chk_adaptive", None)
                     and self.chk_adaptive.isChecked()
                 )
                 self.plan.show_layer(
-                    self._pane_layers(self.plan), adaptive=adaptive,
+                    self._pane_layers(self.plan),
+                    adaptive=adaptive,
                     fit_from=self._pane_fit_layers(self.plan),
                 )
-            for win in list(getattr(self, '_zoom_windows', {}).values()):
+            for win in list(getattr(self, "_zoom_windows", {}).values()):
                 with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-                    if getattr(win.pane, 'v_axis', None) == 'z':
+                    if getattr(win.pane, "v_axis", None) == "z":
                         win._fit()
             if abs(self._z_stretch() - z_s) > 1e-9:
                 self._z_stretch_pending = True
         finally:
             self._z_stretch_busy = False
-            if getattr(self, '_z_stretch_pending', False):
+            if getattr(self, "_z_stretch_pending", False):
                 self._z_stretch_pending = False
                 # Coalesce rapid Factor spins into one follow-up rebuild.
                 self._schedule_z_stretch_rebuild(60)
 
     def _on_z_stretch_toggled(self, on):
         # Manual change — stop Profile from fighting the user on the next cut.
-        if not getattr(self, '_profile_autostretch_busy', False):
+        if not getattr(self, "_profile_autostretch_busy", False):
             self._profile_stretch_auto = False
         self.z_stretch_on = bool(on)
-        spn = getattr(self, 'spn_z_stretch', None)
+        spn = getattr(self, "spn_z_stretch", None)
         if spn is not None:
             spn.setEnabled(bool(on))
-        btn = getattr(self, 'btn_z_stretch_reset', None)
+        btn = getattr(self, "btn_z_stretch_reset", None)
         if btn is not None:
             btn.setEnabled(bool(on))
         # Toggle applies immediately (busy guard still protects density).
         self._rebuild_sections_for_stretch()
 
     def _on_z_stretch_factor(self, value):
-        if not getattr(self, '_profile_autostretch_busy', False):
+        if not getattr(self, "_profile_autostretch_busy", False):
             self._profile_stretch_auto = False
         self.z_stretch_factor = L._clamp_z_stretch(value)
-        if not getattr(self, 'z_stretch_on', False):
-            if getattr(self, 'chk_z_stretch', None) is not None:
+        if not getattr(self, "z_stretch_on", False):
+            if getattr(self, "chk_z_stretch", None) is not None:
                 if not self.chk_z_stretch.isChecked():
                     return
             else:
                 return
         # Debounce: spinning Factor while density is on must not nest rebuilds.
-        if getattr(self, '_z_stretch_busy', False):
+        if getattr(self, "_z_stretch_busy", False):
             self._z_stretch_pending = True
             return
         self._schedule_z_stretch_rebuild(180)
 
     def _on_z_stretch_reset(self):
-        spn = getattr(self, 'spn_z_stretch', None)
+        spn = getattr(self, "spn_z_stretch", None)
         if spn is None:
             return
-        if not getattr(self, '_profile_autostretch_busy', False):
+        if not getattr(self, "_profile_autostretch_busy", False):
             self._profile_stretch_auto = False
         spn.setValue(1.0)
 
+    def _wire_pane_point_click(self, pane):
+        """Bind Find-on-click for one plot pane (main or Zoom)."""
+        if pane is None or getattr(pane, "overlay", None) is None:
+            return
+        ov = pane.overlay
+
+        def _click(px, py, p=pane):
+            self._on_pane_point_click(p, px, py)
+
+        ov._point_click = _click
+
+    def _wire_pane_hover(self, pane):
+        """Bind hover move/leave for coords + optional Point info / Cross-view."""
+        if pane is None or getattr(pane, "overlay", None) is None:
+            return
+        ov = pane.overlay
+
+        def _move(px, py, p=pane):
+            self._queue_pane_hover(p, px, py)
+
+        def _leave(p=pane):
+            self._on_pane_hover_leave(p)
+
+        ov._hover_move = _move
+        ov._hover_leave = _leave
+
     def _wire_cross_hover(self):
-        """Bind main-pane overlays to throttled hover hit-testing."""
+        """Bind main-pane overlays to coords / hit-test hover + Find click."""
         for pane in (
-            getattr(self, 'plan', None),
-            getattr(self, 'longp', None),
-            getattr(self, 'transp', None),
+            getattr(self, "plan", None),
+            getattr(self, "longp", None),
+            getattr(self, "transp", None),
         ):
-            if pane is None or getattr(pane, 'overlay', None) is None:
+            if pane is None or getattr(pane, "overlay", None) is None:
                 continue
-            ov = pane.overlay
-
-            def _move(px, py, p=pane):
-                self._queue_pane_hover(p, px, py)
-
-            def _leave(p=pane):
-                self._on_pane_hover_leave(p)
-
-            ov._hover_move = _move
-            ov._hover_leave = _leave
+            self._wire_pane_hover(pane)
+            self._wire_pane_point_click(pane)
 
     def _hover_tracking_on(self):
         return bool(
-            getattr(self, 'point_info', False)
-            or getattr(self, 'cross_hover_on', False)
+            getattr(self, "point_info", False) or getattr(self, "cross_hover_on", False)
         )
 
     # ----- Find (Lite parity) -------------------------------------------------
@@ -5568,16 +6693,16 @@ class ARSYSDock(QMainWindow):
     def _set_find_enabled(self, on):
         on = bool(on) and self.source is not None
         for w in (
-            getattr(self, 'edt_find', None),
-            getattr(self, 'chk_find_or', None),
-            getattr(self, 'tbl_find', None),
+            getattr(self, "edt_find", None),
+            getattr(self, "chk_find_or", None),
+            getattr(self, "tbl_find", None),
         ):
             if w is not None:
                 w.setEnabled(on)
 
     def _style_find_table(self):
         """Theme Find hit table so QGIS does not paint white alternate rows."""
-        tbl = getattr(self, 'tbl_find', None)
+        tbl = getattr(self, "tbl_find", None)
         if tbl is None:
             return
         pal = _theme_palette()
@@ -5592,32 +6717,31 @@ class ARSYSDock(QMainWindow):
                 hdr.setPalette(pal)
                 hdr.setAutoFillBackground(True)
         tbl.setStyleSheet(
-            'QTableWidget#arsysFindTable {'
-            '  background:%(btn)s; color:%(ink)s;'
-            '  alternate-background-color:%(panel)s;'
-            '  border:1px solid %(btn_border)s;'
-            '  selection-background-color:%(accent)s; selection-color:#fff8ee;'
-            '  font-size:11px;'
-            '}'
-            'QTableWidget#arsysFindTable::item {'
-            '  padding:2px 5px; color:%(ink)s;'
-            '}'
-            'QTableWidget#arsysFindTable::item:selected {'
-            '  background:%(accent)s; color:#fff8ee;'
-            '}'
-            'QHeaderView::section {'
-            '  background:%(panel)s; color:%(ink)s;'
-            '  border:none; border-right:1px solid %(btn_border)s;'
-            '  border-bottom:1px solid %(btn_border)s;'
-            '  padding:3px 5px; font-size:10px; font-weight:600;'
-            '}'
-            % t
+            "QTableWidget#arsysFindTable {"
+            "  background:%(btn)s; color:%(ink)s;"
+            "  alternate-background-color:%(panel)s;"
+            "  border:1px solid %(btn_border)s;"
+            "  selection-background-color:%(accent)s; selection-color:#fff8ee;"
+            "  font-size:11px;"
+            "}"
+            "QTableWidget#arsysFindTable::item {"
+            "  padding:2px 5px; color:%(ink)s;"
+            "}"
+            "QTableWidget#arsysFindTable::item:selected {"
+            "  background:%(accent)s; color:#fff8ee;"
+            "}"
+            "QHeaderView::section {"
+            "  background:%(panel)s; color:%(ink)s;"
+            "  border:none; border-right:1px solid %(btn_border)s;"
+            "  border-bottom:1px solid %(btn_border)s;"
+            "  padding:3px 5px; font-size:10px; font-weight:600;"
+            "}" % t
         )
 
     def _style_find_detail(self):
         """Find fiche uses the **UI theme** (not inverted tooltip colours)."""
-        lab = getattr(self, 'lbl_find_detail', None)
-        scroll = getattr(self, '_find_detail_scroll', None)
+        lab = getattr(self, "lbl_find_detail", None)
+        scroll = getattr(self, "_find_detail_scroll", None)
         t = UI_THEME
         pal = _theme_palette()
         if scroll is not None:
@@ -5628,44 +6752,38 @@ class ARSYSDock(QMainWindow):
                 if vp is not None:
                     vp.setPalette(pal)
                     vp.setAutoFillBackground(True)
-                    vp.setStyleSheet(
-                        'background:%(btn)s; color:%(ink)s;' % t
-                    )
+                    vp.setStyleSheet("background:%(btn)s; color:%(ink)s;" % t)
             scroll.setStyleSheet(
-                'QScrollArea#arsysFindDetailScroll {'
-                '  background:%(btn)s; border:none;'
-                '}'
-                % t
+                "QScrollArea#arsysFindDetailScroll {"
+                "  background:%(btn)s; border:none;"
+                "}" % t
             )
         if lab is None:
             return
         lab.setPalette(pal)
         lab.setAutoFillBackground(True)
         lab.setStyleSheet(
-            'QLabel#arsysFindDetail {'
-            '  background:%(btn)s; color:%(ink)s;'
-            '  border:1px solid %(btn_border)s;'
-            '  border-radius:6px; padding:6px 8px; font-size:11px;'
-            '}'
-            % t
+            "QLabel#arsysFindDetail {"
+            "  background:%(btn)s; color:%(ink)s;"
+            "  border:1px solid %(btn_border)s;"
+            "  border-radius:6px; padding:6px 8px; font-size:11px;"
+            "}" % t
         )
 
     def _schedule_find(self, *_args):
-        timer = getattr(self, '_find_timer', None)
+        timer = getattr(self, "_find_timer", None)
         if timer is not None:
             timer.start(180)
 
     def _find_tokens(self, query):
-        return [t for t in str(query or '').strip().lower().split() if t]
+        return [t for t in str(query or "").strip().lower().split() if t]
 
     def _find_escape_re(self, token):
         return re.escape(str(token))
 
     def _find_value_matches(self, value, token):
         # Exact whole-word match (Lite valueMatchesToken).
-        re_pat = (
-            r'(^|[^a-z0-9])' + self._find_escape_re(token) + r'(?![a-z0-9])'
-        )
+        re_pat = r"(^|[^a-z0-9])" + self._find_escape_re(token) + r"(?![a-z0-9])"
         return re.search(re_pat, value) is not None
 
     def _find_attr_values(self, attrs):
@@ -5707,7 +6825,7 @@ class ARSYSDock(QMainWindow):
         # Fill up to 4 columns with other non-coordinate fields when preferred
         # ones are missing (e.g. sample has quadre/material but no id/numero).
         skip = {c.lower() for c in cols}
-        skip.update({'p1x', 'p1y', 'p1z', 'p2x', 'p2y', 'p2z', 'p3x', 'p3y', 'p3z'})
+        skip.update({"p1x", "p1y", "p1z", "p2x", "p2y", "p2z", "p3x", "p3y", "p3z"})
         if len(cols) < 4:
             for name in names:
                 if str(name).lower() in skip:
@@ -5724,7 +6842,9 @@ class ARSYSDock(QMainWindow):
             return attrs
         for field in self.source.fields():
             name = field.name()
-            with suppress(AttributeError, RuntimeError, TypeError, ValueError, KeyError):
+            with suppress(
+                AttributeError, RuntimeError, TypeError, ValueError, KeyError
+            ):
                 attrs[name] = feat.attribute(name)
         geom = feat.geometry()
         x = y = z = None
@@ -5733,32 +6853,34 @@ class ARSYSDock(QMainWindow):
                 pt = geom.constGet()
                 x = float(pt.x())
                 y = float(pt.y())
-                if hasattr(pt, 'is3D') and pt.is3D() and hasattr(pt, 'z'):
+                if hasattr(pt, "is3D") and pt.is3D() and hasattr(pt, "z"):
                     z = float(pt.z())
-                elif hasattr(pt, 'z'):
+                elif hasattr(pt, "z"):
                     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                         z = float(pt.z())
         if z is None:
             z = 0.0
-            with suppress(AttributeError, RuntimeError, TypeError, ValueError, KeyError):
-                raw = attrs.get('p1z')
-                if raw is not None and str(raw).strip() != '':
+            with suppress(
+                AttributeError, RuntimeError, TypeError, ValueError, KeyError
+            ):
+                raw = attrs.get("p1z")
+                if raw is not None and str(raw).strip() != "":
                     z = float(raw)
         if x is not None and y is not None:
-            attrs['p1x'] = x
-            attrs['p1y'] = y
-            attrs['p1z'] = z
+            attrs["p1x"] = x
+            attrs["p1y"] = y
+            attrs["p1z"] = z
             return attrs, (x, y, z)
         return attrs, None
 
     def _run_find(self):
-        edt = getattr(self, 'edt_find', None)
-        tbl = getattr(self, 'tbl_find', None)
+        edt = getattr(self, "edt_find", None)
+        tbl = getattr(self, "tbl_find", None)
         if edt is None or tbl is None or self.source is None:
             return
         tokens = self._find_tokens(edt.text())
         match_or = bool(
-            getattr(self, 'chk_find_or', None) is not None
+            getattr(self, "chk_find_or", None) is not None
             and self.chk_find_or.isChecked()
         )
         cols = self._find_list_columns()
@@ -5768,7 +6890,7 @@ class ARSYSDock(QMainWindow):
         tbl.setHorizontalHeaderLabels(cols)
         if not tokens:
             tbl.blockSignals(False)
-            self._set_find_status('')
+            self._set_find_status("")
             # Empty query: drop selection (Lite).
             self._clear_find_selection(keep_query=True)
             return
@@ -5798,34 +6920,33 @@ class ARSYSDock(QMainWindow):
             tbl.selectRow(select_row)
         if not hits:
             self._clear_find_selection(keep_query=True)
-            self._set_find_status('No matches.')
+            self._set_find_status("No matches.")
             return
-        if (
-            self._selected_fid is not None
-            and not any(fid == self._selected_fid for fid, _a, _x in hits)
+        if self._selected_fid is not None and not any(
+            fid == self._selected_fid for fid, _a, _x in hits
         ):
             self._clear_find_selection(keep_query=True)
-        mode = 'OR' if match_or else 'AND'
+        mode = "OR" if match_or else "AND"
         n = len(hits)
-        more = '+' if n >= 500 else ''
+        more = "+" if n >= 500 else ""
         self._set_find_status(
-            '%d%s match%s (%s). Columns = field names.'
-            % (n, more, '' if n == 1 else 'es', mode)
+            "%d%s match%s (%s). Columns = field names."
+            % (n, more, "" if n == 1 else "es", mode)
         )
 
     def _set_find_status(self, text):
-        lab = getattr(self, 'lbl_find_status', None)
+        lab = getattr(self, "lbl_find_status", None)
         if lab is None:
             return
         if not text:
             lab.hide()
-            lab.setText('')
+            lab.setText("")
             return
         lab.setText(text)
         lab.show()
 
     def _find_row_payload(self, row):
-        tbl = getattr(self, 'tbl_find', None)
+        tbl = getattr(self, "tbl_find", None)
         if tbl is None or row is None or row < 0:
             return None
         item = tbl.item(row, 0)
@@ -5834,7 +6955,7 @@ class ARSYSDock(QMainWindow):
         return item.data(Qt.ItemDataRole.UserRole)
 
     def _on_find_selection(self):
-        tbl = getattr(self, 'tbl_find', None)
+        tbl = getattr(self, "tbl_find", None)
         if tbl is None:
             return
         rows = tbl.selectionModel().selectedRows() if tbl.selectionModel() else []
@@ -5856,7 +6977,7 @@ class ARSYSDock(QMainWindow):
         self._select_find_hit(fid, xyz, attrs)
 
     def _find_select_first(self):
-        tbl = getattr(self, 'tbl_find', None)
+        tbl = getattr(self, "tbl_find", None)
         if tbl is None or tbl.rowCount() < 1:
             self._run_find()
             if tbl is None or tbl.rowCount() < 1:
@@ -5867,34 +6988,62 @@ class ARSYSDock(QMainWindow):
             fid, xyz, attrs = data
             self._select_find_hit(fid, xyz, attrs)
 
-    def _select_find_hit(self, fid, xyz, attrs):
+    def _show_find_tab(self):
+        tabs = getattr(self, "opt_tabs", None)
+        if tabs is None:
+            return
+        for i in range(tabs.count()):
+            if str(tabs.tabText(i) or "") == "Find":
+                tabs.setCurrentIndex(i)
+                return
+
+    def _select_find_hit(self, fid, xyz, attrs, show_tab=False):
         self._selected_fid = fid
         self._selected_xyz = xyz
         self._selected_attrs = attrs
         self._reveal_find_hit(attrs, xyz)
         self._fill_find_detail(attrs)
         self._apply_selection_marks(xyz)
-        btn = getattr(self, 'btn_find_clear', None)
+        btn = getattr(self, "btn_find_clear", None)
         if btn is not None:
             btn.setEnabled(True)
             btn.show()
         self._ensure_point_in_view(xyz)
+        if show_tab:
+            self._show_find_tab()
+
+    def _on_pane_point_click(self, pane, px, py):
+        """Lite parity: click a plotted point → Find fiche (+ green ring)."""
+        if self.source is None:
+            return
+        if getattr(self, "_measure_on", False):
+            return
+        if getattr(self, "_profile_picking", None) in ("A", "B"):
+            return
+        map_xy = self._pane_map_xy(pane, px, py)
+        if map_xy is None:
+            return
+        hit = self._hit_source_feature(pane, map_xy[0], map_xy[1])
+        if hit is None:
+            return
+        x, y, z, fid, attrs = hit
+        self._select_find_hit(fid, (x, y, z), attrs, show_tab=True)
 
     def _fill_find_detail(self, attrs):
-        lab = getattr(self, 'lbl_find_detail', None)
-        scroll = getattr(self, '_find_detail_scroll', None)
+        lab = getattr(self, "lbl_find_detail", None)
+        scroll = getattr(self, "_find_detail_scroll", None)
         if lab is None:
             return
         self._style_find_detail()
         # Match Options chrome (UI_THEME) — never inverted tooltip colours.
         t = UI_THEME
-        ink = t['ink']
-        muted = t.get('disabled') or (
-            '#8a8178' if str(ink).lower().startswith('#fff') else '#6b645c'
+        ink = t["ink"]
+        muted = t.get("disabled") or (
+            "#8a8178" if str(ink).lower().startswith("#fff") else "#6b645c"
         )
         # Full loaded schema (same rule as Large Point info).
         names = self._loaded_field_names(attrs)
-        xyz = [h for h in ('p1x', 'p1y', 'p1z') if h in names]
+        xyz = [h for h in ("p1x", "p1y", "p1z") if h in names]
         headers = xyz + [h for h in names if h not in xyz]
 
         def kv_cell(key):
@@ -5902,13 +7051,13 @@ class ARSYSDock(QMainWindow):
                 '<td style="color:%(muted)s;padding:1px 4px 1px 0;text-align:left;'
                 'vertical-align:top;white-space:nowrap;">%(key)s</td>'
                 '<td style="color:%(ink)s;padding:1px 8px 1px 0;'
-                'vertical-align:top;font-family:monospace;'
+                "vertical-align:top;font-family:monospace;"
                 'word-wrap:break-word;overflow-wrap:anywhere;">%(val)s</td>'
                 % {
-                    'muted': muted,
-                    'ink': ink,
-                    'key': _point_info_escape(key),
-                    'val': _point_info_escape(
+                    "muted": muted,
+                    "ink": ink,
+                    "key": _point_info_escape(key),
+                    "val": _point_info_escape(
                         _point_info_cell_text((attrs or {}).get(key))
                     ),
                 }
@@ -5917,25 +7066,25 @@ class ARSYSDock(QMainWindow):
         # Two field-pairs per row, left-aligned, fixed table width (no h-scroll).
         items = list(headers)
         if len(items) % 2:
-            items.append('')
+            items.append("")
         rows = []
         for i in range(0, len(items), 2):
             k1, k2 = items[i], items[i + 1]
             left = kv_cell(k1)
             if not k2:
-                right = '<td></td><td></td>'
+                right = "<td></td><td></td>"
             else:
                 right = kv_cell(k2)
-            rows.append('<tr>%s%s</tr>' % (left, right))
+            rows.append("<tr>%s%s</tr>" % (left, right))
         lab.setText(
             '<table width="100%%" cellspacing="0" cellpadding="0" '
             'style="table-layout:fixed;width:100%%;border-collapse:collapse;'
             'background:transparent;color:%s;font-size:11px;line-height:1.25;">'
-            '<colgroup>'
+            "<colgroup>"
             '<col style="width:22%%"><col style="width:28%%">'
             '<col style="width:22%%"><col style="width:28%%">'
-            '</colgroup>'
-            '%s</table>' % (ink, ''.join(rows))
+            "</colgroup>"
+            "%s</table>" % (ink, "".join(rows))
         )
         lab.show()
         if scroll is not None:
@@ -5946,20 +7095,20 @@ class ARSYSDock(QMainWindow):
         self._selected_xyz = None
         self._selected_attrs = None
         self._apply_selection_marks(None)
-        lab = getattr(self, 'lbl_find_detail', None)
-        scroll = getattr(self, '_find_detail_scroll', None)
+        lab = getattr(self, "lbl_find_detail", None)
+        scroll = getattr(self, "_find_detail_scroll", None)
         if lab is not None:
             lab.clear()
             lab.hide()
         if scroll is not None:
             scroll.hide()
-        btn = getattr(self, 'btn_find_clear', None)
+        btn = getattr(self, "btn_find_clear", None)
         if btn is not None:
             btn.setEnabled(False)
             btn.hide()
         if not keep_query:
-            edt = getattr(self, 'edt_find', None)
-            tbl = getattr(self, 'tbl_find', None)
+            edt = getattr(self, "edt_find", None)
+            tbl = getattr(self, "tbl_find", None)
             if edt is not None:
                 edt.blockSignals(True)
                 edt.clear()
@@ -5968,15 +7117,25 @@ class ARSYSDock(QMainWindow):
                 tbl.blockSignals(True)
                 tbl.setRowCount(0)
                 tbl.blockSignals(False)
-            self._set_find_status('')
+            self._set_find_status("")
+
+    def _iter_plot_panes(self):
+        """Main panes + open zoom panes (for selection marks / clicks)."""
+        for pane in (
+            getattr(self, "plan", None),
+            getattr(self, "longp", None),
+            getattr(self, "transp", None),
+        ):
+            if pane is not None:
+                yield pane
+        for win in list(getattr(self, "_zoom_windows", {}).values()):
+            pane = getattr(win, "pane", None)
+            if pane is not None:
+                yield pane
 
     def _apply_selection_marks(self, xyz):
-        for pane in (
-            getattr(self, 'plan', None),
-            getattr(self, 'longp', None),
-            getattr(self, 'transp', None),
-        ):
-            if pane is None or getattr(pane, 'overlay', None) is None:
+        for pane in self._iter_plot_panes():
+            if getattr(pane, "overlay", None) is None:
                 continue
             if xyz is None:
                 pane.overlay.set_selection_mark(None, None)
@@ -5990,10 +7149,10 @@ class ARSYSDock(QMainWindow):
     def _reveal_find_hit(self, attrs, xyz):
         """Unhide group / expand XYZ filters so the hit is drawable (Lite)."""
         changed = False
-        gfield = getattr(self, 'group_field', None)
+        gfield = getattr(self, "group_field", None)
         if gfield and attrs and gfield in attrs:
             gval = L.group_label(attrs.get(gfield))
-            btns = getattr(self, '_group_btns', None) or {}
+            btns = getattr(self, "_group_btns", None) or {}
             if gval in btns and gval not in self.active_groups:
                 btn = btns[gval]
                 btn.blockSignals(True)
@@ -6004,9 +7163,9 @@ class ARSYSDock(QMainWindow):
         if xyz is not None:
             x, y, z = xyz
             for axis, val, rng in (
-                ('x', x, getattr(self, 'rng_x', None)),
-                ('y', y, getattr(self, 'rng_y', None)),
-                ('z', z, getattr(self, 'rng_z', None)),
+                ("x", x, getattr(self, "rng_x", None)),
+                ("y", y, getattr(self, "rng_y", None)),
+                ("z", z, getattr(self, "rng_z", None)),
             ):
                 if rng is None or not math.isfinite(float(val)):
                     continue
@@ -6017,6 +7176,7 @@ class ARSYSDock(QMainWindow):
                     rng.set_values(nlo, nhi)
                     changed = True
         if changed:
+            self._sync_measure_stroke()
             self._apply_filters_now()
 
     def _ensure_point_in_view(self, xyz):
@@ -6024,11 +7184,11 @@ class ARSYSDock(QMainWindow):
         if xyz is None:
             return
         for pane in (
-            getattr(self, 'plan', None),
-            getattr(self, 'longp', None),
-            getattr(self, 'transp', None),
+            getattr(self, "plan", None),
+            getattr(self, "longp", None),
+            getattr(self, "transp", None),
         ):
-            if pane is None or getattr(pane, 'canvas', None) is None:
+            if pane is None or getattr(pane, "canvas", None) is None:
                 continue
             mxy = self._hover_map_for_pane(pane, xyz)
             if mxy is None:
@@ -6051,10 +7211,14 @@ class ARSYSDock(QMainWindow):
             canvas._user_view = True
             canvas._fitting = True
             try:
-                canvas.setExtent(QgsRectangle(
-                    mx - w / 2.0, my - h / 2.0,
-                    mx + w / 2.0, my + h / 2.0,
-                ))
+                canvas.setExtent(
+                    QgsRectangle(
+                        mx - w / 2.0,
+                        my - h / 2.0,
+                        mx + w / 2.0,
+                        my + h / 2.0,
+                    )
+                )
                 canvas.refresh()
             finally:
                 canvas._fitting = False
@@ -6063,19 +7227,21 @@ class ARSYSDock(QMainWindow):
 
     def _sync_point_info_flags(self):
         self.point_info = bool(
-            getattr(self, 'chk_point_info', None) is not None
+            getattr(self, "chk_point_info", None) is not None
             and self.chk_point_info.isChecked()
         )
         self.point_info_large = bool(
             self.point_info
-            and getattr(self, 'chk_point_info_large', None) is not None
+            and getattr(self, "chk_point_info_large", None) is not None
             and self.chk_point_info_large.isChecked()
         )
 
     def _on_point_info_toggled(self, on):
         self._sync_point_info_flags()
-        if getattr(self, 'chk_point_info_large', None) is not None:
-            self.chk_point_info_large.setEnabled(self.point_info and self.source is not None)
+        if getattr(self, "chk_point_info_large", None) is not None:
+            self.chk_point_info_large.setEnabled(
+                self.point_info and self.source is not None
+            )
             if not self.point_info:
                 self.chk_point_info_large.blockSignals(True)
                 self.chk_point_info_large.setChecked(False)
@@ -6101,17 +7267,14 @@ class ARSYSDock(QMainWindow):
         if not self.point_info:
             self._hide_point_info_card()
             return
-        attrs = getattr(self, '_hover_attrs', None)
+        attrs = getattr(self, "_hover_attrs", None)
         if not attrs:
             return
         self._fill_point_info_card(attrs)
         self._point_info_dirty = False
-        pane = (
-            self._hover_source_pane
-            or getattr(self, '_hover_last_pane', None)
-        )
-        pos = getattr(self, '_hover_px_py', None)
-        pending = getattr(self, '_hover_pending', None)
+        pane = self._hover_source_pane or getattr(self, "_hover_last_pane", None)
+        pos = getattr(self, "_hover_px_py", None)
+        pending = getattr(self, "_hover_pending", None)
         if pending is not None:
             pane = pending[0]
             pos = (pending[1], pending[2])
@@ -6120,8 +7283,8 @@ class ARSYSDock(QMainWindow):
             if self._hover_xyz is not None and self._hover_source_pane is not None:
                 self._apply_hover_marks(self._hover_xyz, pane)
         elif force_show:
-            card = getattr(self, '_point_info_card', None)
-            stage = getattr(self, '_stage', None)
+            card = getattr(self, "_point_info_card", None)
+            stage = getattr(self, "_stage", None)
             if card is not None and stage is not None:
                 # Park the rebuilt card near the top-left of the stage.
                 card.place_on(stage, 24, 24)
@@ -6136,44 +7299,402 @@ class ARSYSDock(QMainWindow):
         elif not self.cross_hover_on and not self.point_info:
             self._clear_cross_hover()
 
-    def _queue_pane_hover(self, pane, px, py):
-        if not self._hover_tracking_on():
+    def _main_plot_panes(self):
+        return [
+            p
+            for p in (
+                getattr(self, "plan", None),
+                getattr(self, "longp", None),
+                getattr(self, "transp", None),
+            )
+            if p is not None
+        ]
+
+    def _sync_measure_stroke(self):
+        """Pick a measure-line colour that does not clash with active Group chips."""
+        colors = getattr(self, "colors", None) or {}
+        active = getattr(self, "active_groups", None) or set()
+        # Only visible chips — hidden groups must not block signal colours.
+        if active:
+            used = [colors[g] for g in active if g in colors]
+        else:
+            used = list(colors.values())
+        stroke = pick_measure_stroke(used)
+        for pane in self._main_plot_panes():
+            ov = getattr(pane, "overlay", None)
+            if ov is not None:
+                ov._measure_stroke = QColor(stroke)
+                with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                    ov.update()
+        for win in list(getattr(self, "_zoom_windows", {}).values()):
+            ov = getattr(getattr(win, "pane", None), "overlay", None)
+            if ov is not None:
+                ov._measure_stroke = QColor(stroke)
+                with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                    ov.update()
+
+    def _on_measure_toggled(self, on):
+        self._measure_on = bool(on)
+        self._measure_pane = None
+        esc = getattr(self, "_measure_esc", None)
+        if esc is not None:
+            esc.setEnabled(bool(on))
+        for pane in self._main_plot_panes():
+            ov = getattr(pane, "overlay", None)
+            if ov is None:
+                continue
+            ov.clear_measure()
+            ov._measure_click = None
+            ov._escape_cb = None
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                ov._restore_idle_cursor()
+        if not self._measure_on:
+            self._set_measure_blink(False)
             return
+        self._sync_measure_stroke()
+        for pane in self._main_plot_panes():
+            ov = getattr(pane, "overlay", None)
+            if ov is None:
+                continue
+            ov._measure_click = lambda px, py, p=pane: self._on_measure_click(p, px, py)
+            ov._escape_cb = self._on_measure_escape
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                ov._restore_idle_cursor()
+        self._set_measure_blink(True)
+
+    def _on_measure_click(self, pane, px, py):
+        if not self._measure_on or pane is None:
+            return
+        ov = getattr(pane, "overlay", None)
+        if ov is None:
+            return
+        xy = ov._profile_screen_to_map(px, py)
+        if xy is None:
+            return
+        # Switching view while Measure is on: clear others and start A here.
+        if self._measure_pane is not pane:
+            self._measure_pane = pane
+            for other in self._main_plot_panes():
+                if other is pane:
+                    continue
+                oov = getattr(other, "overlay", None)
+                if oov is None:
+                    continue
+                oov.clear_measure()
+            ov.set_measure(a=xy, b=None, live=None)
+            return
+        if ov._measure_a is None or ov._measure_b is not None:
+            # Start a new pair on the same view.
+            ov.set_measure(a=xy, b=None, live=None)
+            return
+        ov.set_measure(a=ov._measure_a, b=xy, live=None)
+        # Keep mode on so a further click starts a new pair.
+
+    def _on_measure_escape(self):
+        if self._measure_on:
+            self._clear_measure()
+
+    def _set_measure_blink(self, on):
+        timer = getattr(self, "_measure_blink_timer", None)
+        if timer is None:
+            return
+        if on:
+            self._measure_blink_bright = True
+            self._apply_measure_btn_blink(True)
+            timer.start()
+        else:
+            timer.stop()
+            self._restore_measure_btn_style()
+
+    def _blink_measure_btn(self):
+        if not self._measure_on:
+            self._set_measure_blink(False)
+            return
+        self._measure_blink_bright = not bool(
+            getattr(self, "_measure_blink_bright", True)
+        )
+        self._apply_measure_btn_blink(self._measure_blink_bright)
+
+    def _on_recalc_vector_angles(self):
+        layer = self.source
+        if layer is None or not layer.isValid():
+            QMessageBox.warning(
+                self,
+                "Recalculate",
+                "Load data first (Import, Sample or Use selected layer).",
+            )
+            return
+        try:
+            updated, skipped = L.fill_vector_angles(layer, force=True)
+        except Exception as exc:
+            QMessageBox.warning(self, "Recalculate", str(exc))
+            return
+        # Drop cached hover/selection attrs so Point info shows new G_* values.
+        self._hover_attrs = None
+        self._selected_attrs = None
+        msg = "Recalculated orientation/inclination on %d row(s)." % updated
+        if skipped:
+            msg += " Skipped %d without a vector axis." % skipped
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            self.iface.messageBar().pushInfo("ARSYSplotQGIS", msg)
+        QMessageBox.information(self, "Recalculate", msg)
+
+    def _sync_resources_tool_row(self):
+        """Keep Stretch Z / Measure / Cross-view / Orientation / Coordinates same outer height."""
+        boxes = [
+            getattr(self, "_res_stretch_box", None),
+            getattr(self, "_res_measure_box", None),
+            getattr(self, "_res_cross_box", None),
+            getattr(self, "_res_angles_box", None),
+            getattr(self, "_res_coords_box", None),
+        ]
+        boxes = [b for b in boxes if b is not None]
+        if len(boxes) < 2:
+            return
+        for box in boxes:
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                box.setMinimumHeight(0)
+        h = 0
+        for box in boxes:
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                h = max(
+                    h, int(box.sizeHint().height()), int(box.minimumSizeHint().height())
+                )
+        if h <= 0:
+            return
+        for box in boxes:
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                box.setMinimumHeight(h)
+
+    @staticmethod
+    def _fmt_coord_value(value):
+        if value is None:
+            return "--"
+        try:
+            v = float(value)
+            if not math.isfinite(v):
+                return "--"
+            return "%.2f" % v
+        except (TypeError, ValueError):
+            return "--"
+
+    @classmethod
+    def _fmt_qgis_xyz(cls, x, y, z):
+        """Resources readout: values only, always X Y Z order (``23.67  --  -378.47``)."""
+        return "%s  %s  %s" % (
+            cls._fmt_coord_value(x),
+            cls._fmt_coord_value(y),
+            cls._fmt_coord_value(z),
+        )
+
+    def _fmt_zoom_coords(self, pane, x, y, z):
+        """Zoom bar: same as Resources — ``Coordinates:`` + X Y Z values, no letters."""
+        if x is None and y is None and z is None:
+            return "Coordinates: --"
+        return "Coordinates: %s" % self._fmt_qgis_xyz(x, y, z)
+
+    def _style_coord_labels(self):
+        t = UI_THEME
+        muted = t.get("muted") or t.get("ink", "#8a8178")
+        css = (
+            "color:%s; font-family:monospace; font-size:11px;"
+            " background:transparent; border:none;" % muted
+        )
+        lab = getattr(self, "lbl_coords_res", None)
+        if lab is not None:
+            lab.setStyleSheet(css)
+
+    def _set_resources_coords(self, x, y, z):
+        lab = getattr(self, "lbl_coords_res", None)
+        if lab is not None:
+            lab.setText(self._fmt_qgis_xyz(x, y, z))
+
+    def _clear_resources_coords(self):
+        self._set_resources_coords(None, None, None)
+
+    def _zoom_window_for_pane(self, pane):
+        if pane is None:
+            return None
+        for win in list(getattr(self, "_zoom_windows", {}).values()):
+            if getattr(win, "pane", None) is pane:
+                return win
+        return None
+
+    def _set_zoom_coords(self, win, pane, x, y, z):
+        if win is None:
+            return
+        lab = getattr(win, "lbl_coords", None)
+        if lab is None:
+            return
+        lab.setText(self._fmt_zoom_coords(pane, x, y, z))
+
+    def _cursor_xyz_from_map(self, pane, map_x, map_y):
+        """Map coords under cursor → partial real XYZ ``(x, y, z)`` (None = unknown)."""
+        key = self._pane_view_key(pane)
+        if key is None:
+            return None, None, None
+        try:
+            mx, my = float(map_x), float(map_y)
+        except (TypeError, ValueError):
+            return None, None, None
+        if key == "plan":
+            return mx, my, None
+        stretch = self._z_stretch()
+        if stretch <= 0:
+            stretch = 1.0
+        z = my / stretch
+        prof = self._profile_spec()
+        if prof is not None and prof.get("frame") is not None:
+            frame = prof["frame"]
+            if key == "long":
+                # LONG H = plan axis of axial foot → reconstruct XY on A→B (v=0).
+                ax, ay, c, s, _length = frame
+                u = None
+                with suppress(ZeroDivisionError, TypeError, ValueError):
+                    if abs(c) >= abs(s):
+                        if abs(c) > 1e-12:
+                            u = (mx - ax) / c
+                    else:
+                        if abs(s) > 1e-12:
+                            u = (mx - ay) / s
+                if u is not None:
+                    xy = P.xy_from_uv(u, 0.0, frame)
+                    if xy is not None:
+                        return float(xy[0]), float(xy[1]), z
+                if P.long_plan_axis(frame) == "x":
+                    return mx, None, z
+                return None, mx, z
+            if key == "trans":
+                # Only the non-dominant plan axis is known.
+                if P.trans_plan_axis(frame) == "y":
+                    return None, mx, z
+                return mx, None, z
+        if key == "long":
+            return mx, None, z
+        if key == "trans":
+            return None, mx, z
+        return None, None, None
+
+    def _pixel_in_plot(self, pane, px, py):
+        ov = getattr(pane, "overlay", None) if pane is not None else None
+        if ov is None or not hasattr(ov, "pixel_in_plot"):
+            return False
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            return bool(ov.pixel_in_plot(px, py))
+        return False
+
+    def _update_cursor_coords(self, pane, px, py):
+        """Refresh Resources (+ Zoom label) from cursor position on a plot canvas."""
+        win = self._zoom_window_for_pane(pane)
+        # Only inside the data plot frame (letterbox / axis chrome → --).
+        if not self._pixel_in_plot(pane, px, py):
+            self._clear_cursor_coords(pane)
+            return
+        map_xy = self._pane_map_xy(pane, px, py)
+        if map_xy is None:
+            self._clear_cursor_coords(pane)
+            return
+        x, y, z = self._cursor_xyz_from_map(pane, map_xy[0], map_xy[1])
+        self._coord_source_pane = pane
+        self._set_resources_coords(x, y, z)
+        self._set_zoom_coords(win, pane, x, y, z)
+
+    def _clear_cursor_coords(self, pane=None):
+        """Clear readout when leaving the plot frame (keep other Zoom labels)."""
+        win = self._zoom_window_for_pane(pane) if pane is not None else None
+        if win is not None:
+            self._set_zoom_coords(win, pane, None, None, None)
+        if pane is None or getattr(self, "_coord_source_pane", None) is pane:
+            self._coord_source_pane = None
+            self._clear_resources_coords()
+
+    def _apply_measure_btn_blink(self, bright):
+        btn = getattr(self, "btn_measure", None)
+        if btn is None:
+            return
+        # Colours only — same font/padding as compact_btn_css (no geometry jump).
+        if bright:
+            btn.setStyleSheet(
+                "QPushButton { background:#d97726; color:#1c1916;"
+                "  border:1px solid #f0a050; border-radius:6px;"
+                "  font-size:10px; padding:2px 4px; }" + TOOLTIP_CSS
+            )
+        else:
+            btn.setStyleSheet(
+                "QPushButton { background:#5a3a18; color:#fff5e6;"
+                "  border:1px solid #d97726; border-radius:6px;"
+                "  font-size:10px; padding:2px 4px; }" + TOOLTIP_CSS
+            )
+
+    def _restore_measure_btn_style(self):
+        btn = getattr(self, "btn_measure", None)
+        if btn is None:
+            return
+        btn.setStyleSheet(compact_btn_css())
+
+    def _clear_measure(self):
+        btn = getattr(self, "btn_measure", None)
+        if btn is not None and btn.isChecked():
+            btn.setChecked(False)
+            return
+        self._measure_on = False
+        self._measure_pane = None
+        esc = getattr(self, "_measure_esc", None)
+        if esc is not None:
+            esc.setEnabled(False)
+        self._set_measure_blink(False)
+        for pane in self._main_plot_panes():
+            ov = getattr(pane, "overlay", None)
+            if ov is None:
+                continue
+            ov._measure_click = None
+            ov._escape_cb = None
+            ov.clear_measure()
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                ov._restore_idle_cursor()
+
+    def _queue_pane_hover(self, pane, px, py):
+        # Always track cursor for Resources/Zoom Coordinates; Point info / Cross-view
+        # hit-testing runs in the same throttled tick when enabled.
         self._hover_pending = (pane, float(px), float(py))
-        timer = getattr(self, '_hover_timer', None)
+        timer = getattr(self, "_hover_timer", None)
         if timer is not None and not timer.isActive():
             timer.start(40)
 
     def _run_hover_pending(self):
-        pending = getattr(self, '_hover_pending', None)
+        pending = getattr(self, "_hover_pending", None)
         self._hover_pending = None
         if not pending:
             return
-        if not self._hover_tracking_on():
-            return
         pane, px, py = pending
-        self._apply_pane_hover_at(pane, px, py)
+        canvas = getattr(pane, "canvas", None)
+        if canvas is not None and getattr(canvas, "_pan_last", None) is not None:
+            return
+        self._update_cursor_coords(pane, px, py)
+        if self._hover_tracking_on():
+            self._apply_pane_hover_at(pane, px, py)
 
     def _on_pane_hover_leave(self, pane):
+        self._clear_cursor_coords(pane)
         if self._hover_source_pane is pane or self._hover_xyz is not None:
             self._clear_cross_hover()
 
     def _hide_point_info_card(self):
-        card = getattr(self, '_point_info_card', None)
+        card = getattr(self, "_point_info_card", None)
         if card is not None:
             card.clear()
 
     def _loaded_field_names(self, attrs=None):
         """Every field from the loaded dataset, in schema order (+ geometry P1)."""
         names = []
-        src = getattr(self, 'source', None)
+        src = getattr(self, "source", None)
         if src is not None:
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 names = [f.name() for f in src.fields()]
         if not names and attrs:
-            names = [k for k in attrs.keys() if k not in ('p1x', 'p1y', 'p1z')]
+            names = [k for k in attrs.keys() if k not in ("p1x", "p1y", "p1z")]
         # Geometry P1 always available for display even if absent as attributes.
-        for extra in ('p1x', 'p1y', 'p1z'):
+        for extra in ("p1x", "p1y", "p1z"):
             if attrs is not None and extra in attrs and extra not in names:
                 names.append(extra)
             elif attrs is None and extra not in names:
@@ -6198,14 +7719,14 @@ class ARSYSDock(QMainWindow):
         return names[:8]
 
     def _fill_point_info_card(self, attrs):
-        card = getattr(self, '_point_info_card', None)
+        card = getattr(self, "_point_info_card", None)
         if card is None or not attrs:
             return
         self._sync_point_info_flags()
         names = self._loaded_field_names(attrs)
         headers = self._point_info_headers(names)
         # Keep X/Y/Z together at the top so Large does not bury them.
-        xyz = [h for h in ('p1x', 'p1y', 'p1z') if h in headers]
+        xyz = [h for h in ("p1x", "p1y", "p1z") if h in headers]
         headers = xyz + [h for h in headers if h not in xyz]
         # Large: every loaded field in a two-column tip (no scrollbar).
         if self.point_info_large:
@@ -6216,11 +7737,11 @@ class ARSYSDock(QMainWindow):
             card.set_rows(pairs, two_columns=False)
 
     def _place_point_info_card(self, pane, px, py):
-        card = getattr(self, '_point_info_card', None)
-        stage = getattr(self, '_stage', None)
+        card = getattr(self, "_point_info_card", None)
+        stage = getattr(self, "_stage", None)
         if card is None or stage is None or pane is None:
             return
-        ov = getattr(pane, 'overlay', None)
+        ov = getattr(pane, "overlay", None)
         if ov is None:
             return
         global_pt = ov.mapToGlobal(QPoint(int(round(px)), int(round(py))))
@@ -6234,23 +7755,23 @@ class ARSYSDock(QMainWindow):
         # in the Options panel (mouse leave clears the mark but not the last hit).
         self._hover_source_pane = None
         self._hover_pending = None
-        timer = getattr(self, '_hover_timer', None)
+        timer = getattr(self, "_hover_timer", None)
         if timer is not None:
             timer.stop()
         self._hide_point_info_card()
         for pane in (
-            getattr(self, 'plan', None),
-            getattr(self, 'longp', None),
-            getattr(self, 'transp', None),
+            getattr(self, "plan", None),
+            getattr(self, "longp", None),
+            getattr(self, "transp", None),
         ):
-            if pane is None or getattr(pane, 'overlay', None) is None:
+            if pane is None or getattr(pane, "overlay", None) is None:
                 continue
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 pane.overlay.set_cross_hover(None, None, None)
 
     def _pane_map_xy(self, pane, px, py):
         """Pixel → map coordinates on the pane canvas."""
-        canvas = getattr(pane, 'canvas', None)
+        canvas = getattr(pane, "canvas", None)
         if canvas is None:
             return None
         xform = canvas.getCoordinateTransform()
@@ -6262,7 +7783,7 @@ class ARSYSDock(QMainWindow):
         return None
 
     def _hover_tol_map(self, pane, px_tol=10.0):
-        canvas = getattr(pane, 'canvas', None)
+        canvas = getattr(pane, "canvas", None)
         if canvas is None:
             return 0.25
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
@@ -6271,23 +7792,38 @@ class ARSYSDock(QMainWindow):
                 return mupp * float(px_tol)
         return 0.25
 
+    def _pane_view_key(self, pane):
+        """``'plan' | 'long' | 'trans'`` for main panes and Zoom clones."""
+        if pane is None:
+            return None
+        if pane is getattr(self, "plan", None):
+            return "plan"
+        if pane is getattr(self, "longp", None):
+            return "long"
+        if pane is getattr(self, "transp", None):
+            return "trans"
+        role = getattr(pane, "pane_role", None)
+        if role in ("plan", "long", "trans"):
+            return role
+        h = getattr(pane, "h_axis", None)
+        v = getattr(pane, "v_axis", None)
+        if h == "x" and v == "y":
+            return "plan"
+        if v == "z" and h == "y":
+            return "trans"
+        if v == "z":
+            return "long"
+        return None
+
     def _hit_source_feature(self, pane, map_x, map_y):
         """Nearest filtered source point: ``(x, y, z, fid, attrs)`` or None."""
         src = self.source
         if src is None or src.featureCount() < 1:
             return None
-        stretch = 1.0
-        key = None
-        if pane is getattr(self, 'plan', None):
-            key = 'plan'
-        elif pane is getattr(self, 'longp', None):
-            key = 'long'
-            stretch = self._z_stretch()
-        elif pane is getattr(self, 'transp', None):
-            key = 'trans'
-            stretch = self._z_stretch()
-        else:
+        key = self._pane_view_key(pane)
+        if key is None:
             return None
+        stretch = self._z_stretch() if key in ("long", "trans") else 1.0
         tol = self._hover_tol_map(pane)
         tol2 = tol * tol
         best = None
@@ -6305,9 +7841,9 @@ class ARSYSDock(QMainWindow):
                 x = float(pt.x())
                 y = float(pt.y())
                 z = None
-                if hasattr(pt, 'is3D') and pt.is3D() and hasattr(pt, 'z'):
+                if hasattr(pt, "is3D") and pt.is3D() and hasattr(pt, "z"):
                     z = float(pt.z())
-                elif hasattr(pt, 'z'):
+                elif hasattr(pt, "z"):
                     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                         z = float(pt.z())
                 _ok = True
@@ -6316,30 +7852,32 @@ class ARSYSDock(QMainWindow):
             # Fall back to attribute P1 Z when geometry is 2D / z missing.
             if z is None:
                 z = 0.0
-                with suppress(AttributeError, RuntimeError, TypeError, ValueError, KeyError):
-                    iz = fields.lookupField('p1z')
+                with suppress(
+                    AttributeError, RuntimeError, TypeError, ValueError, KeyError
+                ):
+                    iz = fields.lookupField("p1z")
                     if iz >= 0:
                         raw_z = feat.attribute(iz)
-                        if raw_z is not None and str(raw_z).strip() != '':
+                        if raw_z is not None and str(raw_z).strip() != "":
                             z = float(raw_z)
             prof = self._profile_spec()
-            if prof is not None and key in ('long', 'trans'):
+            if prof is not None and key in ("long", "trans"):
                 # Same projection as rebuild_section: plan axis × Z (not raw U/V).
-                if not P.in_corridor(x, y, prof['frame'], prof['wide_m']):
+                if not P.in_corridor(x, y, prof["frame"], prof["wide_m"]):
                     continue
-                if key == 'long':
-                    uv = P.to_uv(x, y, prof['frame'])
+                if key == "long":
+                    uv = P.to_uv(x, y, prof["frame"])
                     if uv is None:
                         continue
-                    h = P.long_h_from_uv(uv[0], prof['frame'])
+                    h = P.long_h_from_uv(uv[0], prof["frame"])
                 else:
-                    h = P.trans_h_from_xy(x, y, prof['frame'])
+                    h = P.trans_h_from_xy(x, y, prof["frame"])
                 if h is None:
                     continue
                 d2 = (h - map_x) ** 2 + (z * stretch - map_y) ** 2
-            elif key == 'plan':
+            elif key == "plan":
                 d2 = (x - map_x) ** 2 + (y - map_y) ** 2
-            elif key == 'long':
+            elif key == "long":
                 d2 = (x - map_x) ** 2 + (z * stretch - map_y) ** 2
             else:
                 d2 = (y - map_x) ** 2 + (z * stretch - map_y) ** 2
@@ -6347,12 +7885,14 @@ class ARSYSDock(QMainWindow):
                 best_d2 = d2
                 attrs = {}
                 for name in field_names:
-                    with suppress(AttributeError, RuntimeError, TypeError, ValueError, KeyError):
+                    with suppress(
+                        AttributeError, RuntimeError, TypeError, ValueError, KeyError
+                    ):
                         attrs[name] = feat.attribute(name)
                 # Geometry XYZ always win (attribute p1z may be null/duplicate).
-                attrs['p1x'] = x
-                attrs['p1y'] = y
-                attrs['p1z'] = z
+                attrs["p1x"] = x
+                attrs["p1y"] = y
+                attrs["p1z"] = z
                 best = (x, y, z, feat.id(), attrs)
         return best
 
@@ -6361,36 +7901,39 @@ class ARSYSDock(QMainWindow):
         if xyz is None or pane is None:
             return None
         x, y, z = xyz
+        key = self._pane_view_key(pane)
+        if key is None:
+            return None
         stretch = self._z_stretch()
-        if pane is getattr(self, 'plan', None):
+        if key == "plan":
             return float(x), float(y)
         prof = self._profile_spec()
         if prof is not None:
             # Match section layers: LONG = plan axis of axial foot, TRANS = other.
-            if pane is getattr(self, 'longp', None):
-                uv = P.to_uv(x, y, prof['frame'])
+            if key == "long":
+                uv = P.to_uv(x, y, prof["frame"])
                 if uv is None:
                     return None
-                h = P.long_h_from_uv(uv[0], prof['frame'])
+                h = P.long_h_from_uv(uv[0], prof["frame"])
                 if h is None:
                     return None
                 return float(h), float(z) * stretch
-            if pane is getattr(self, 'transp', None):
-                h = P.trans_h_from_xy(x, y, prof['frame'])
+            if key == "trans":
+                h = P.trans_h_from_xy(x, y, prof["frame"])
                 if h is None:
                     return None
                 return float(h), float(z) * stretch
             return None
-        if pane is getattr(self, 'longp', None):
+        if key == "long":
             return float(x), float(z) * stretch
-        if pane is getattr(self, 'transp', None):
+        if key == "trans":
             return float(y), float(z) * stretch
         return None
 
     def _apply_hover_marks(self, xyz, source_pane):
         """Paint cross-view / local hover marks for ``xyz``."""
         for other in (self.plan, self.longp, self.transp):
-            if other is None or getattr(other, 'overlay', None) is None:
+            if other is None or getattr(other, "overlay", None) is None:
                 continue
             if not self.cross_hover_on and not (
                 self.point_info and other is source_pane
@@ -6402,9 +7945,9 @@ class ARSYSDock(QMainWindow):
                 other.overlay.set_cross_hover(None, None, None)
                 continue
             if self.cross_hover_on:
-                role = 'here' if other is source_pane else 'other'
+                role = "here" if other is source_pane else "other"
             else:
-                role = 'here'
+                role = "here"
             other.overlay.set_cross_hover(mxy[0], mxy[1], role)
 
     def _apply_pane_hover_at(self, pane, px, py):
@@ -6412,8 +7955,8 @@ class ARSYSDock(QMainWindow):
             self._clear_cross_hover()
             return
         # Ignore hover while panning this pane.
-        canvas = getattr(pane, 'canvas', None)
-        if canvas is not None and getattr(canvas, '_pan_last', None) is not None:
+        canvas = getattr(pane, "canvas", None)
+        if canvas is not None and getattr(canvas, "_pan_last", None) is not None:
             return
         map_xy = self._pane_map_xy(pane, px, py)
         if map_xy is None:
@@ -6428,7 +7971,7 @@ class ARSYSDock(QMainWindow):
         same = (
             self._hover_fid == fid
             and self._hover_source_pane is pane
-            and not getattr(self, '_point_info_dirty', False)
+            and not getattr(self, "_point_info_dirty", False)
         )
         self._hover_xyz = xyz
         self._hover_fid = fid
@@ -6448,19 +7991,20 @@ class ARSYSDock(QMainWindow):
             self._hide_point_info_card()
 
     def _point_shape(self):
-        cmb = getattr(self, 'cmb_point_shape', None)
+        cmb = getattr(self, "cmb_point_shape", None)
         if cmb is not None:
             sid = cmb.currentData()
             if sid:
                 return L.resolve_marker_shape(sid)
-        return L.resolve_marker_shape(getattr(self, 'point_shape', L.DEFAULT_MARKER))
+        return L.resolve_marker_shape(getattr(self, "point_shape", L.DEFAULT_MARKER))
 
     def _on_point_shape(self, *_args):
         self.point_shape = self._point_shape()
+        self._sync_zoom_controls(rebuild_chips=False)
         if self.source is None:
             return
         # Rebuild so style-file shapes stay per value; combo is the default only.
-        if getattr(self, '_style_shapes', None) or getattr(self, '_style_book', None):
+        if getattr(self, "_style_shapes", None) or getattr(self, "_style_book", None):
             self._restyle_points()
             L.copy_renderer(self.source, self.long_layer)
             L.copy_renderer(self.source, self.trans_layer)
@@ -6474,30 +8018,102 @@ class ARSYSDock(QMainWindow):
         self._refresh_zooms()
 
     def _on_point_size(self, value):
-        self.point_size = int(value) / 10.0
-        self.lbl_size.setText('%.1f mm' % self.point_size)
+        self.point_size = max(0.0, min(10.0, int(value) / 100.0))
+        self.lbl_size.setText("%.2f mm" % self.point_size)
+        self._sync_zoom_controls(rebuild_chips=False)
         if self.source is None:
             return
-        L.apply_marker_size(self.source, self.point_size)
-        L.apply_marker_size(self.long_layer, self.point_size)
-        L.apply_marker_size(self.trans_layer, self.point_size)
-        width = self._line_width()
-        L.apply_line_width(self.line_layer, width)
-        L.apply_line_width(self.long_line_layer, width)
-        L.apply_line_width(self.trans_line_layer, width)
+        self._apply_point_sizes(for_paper=False)
         self.plan.canvas.refresh()
         self.longp.canvas.refresh()
         self.transp.canvas.refresh()
         self._refresh_zooms()
 
+    def _point_screen_dpi_value(self):
+        """Effective DPI for screen mm→px. Auto → 96."""
+        dpi = getattr(self, "_point_screen_dpi", None)
+        if dpi is None:
+            return 96.0
+        try:
+            return max(1.0, float(dpi))
+        except (TypeError, ValueError):
+            return 96.0
+
+    def _mm_to_screen_px(self, mm):
+        """Paper mm → screen px at the selected reference DPI.
+
+        ``25.4`` = mm per inch. ``px = mm × DPI / 25.4``.
+        Auto uses 96 DPI (stable preview, not the canvas outputDpi).
+        """
+        return max(0.0, float(mm) * self._point_screen_dpi_value() / 25.4)
+
+    def _on_point_dpi(self, _index=None):
+        raw = self.cmb_point_dpi.currentData()
+        self._point_screen_dpi = None if raw is None else int(raw)
+        if self.source is None:
+            return
+        self._apply_point_sizes(for_paper=False)
+        self.plan.canvas.refresh()
+        self.longp.canvas.refresh()
+        self.transp.canvas.refresh()
+        self._refresh_zooms()
+
+    def _apply_point_sizes(self, for_paper=False):
+        """Apply marker sizes: paper uses mm; screen uses mm→px at canvas DPI."""
+        size_mm = max(0.0, float(self.point_size))
+        width_mm = max(0.25, size_mm * 0.35)
+        if for_paper:
+            L.apply_marker_size(self.source, size_mm, size_unit="mm")
+            L.apply_marker_size(self.long_layer, size_mm, size_unit="mm")
+            L.apply_marker_size(self.trans_layer, size_mm, size_unit="mm")
+            L.apply_line_width(self.line_layer, width_mm)
+            L.apply_line_width(self.long_line_layer, width_mm)
+            L.apply_line_width(self.trans_line_layer, width_mm)
+            return
+        size_px = self._mm_to_screen_px(size_mm)
+        L.apply_marker_size(self.source, size_px, size_unit="px")
+        L.apply_marker_size(self.long_layer, size_px, size_unit="px")
+        L.apply_marker_size(self.trans_layer, size_px, size_unit="px")
+        # Lines stay in mm (QGIS converts with the same canvas DPI).
+        L.apply_line_width(self.line_layer, width_mm)
+        L.apply_line_width(self.long_line_layer, width_mm)
+        L.apply_line_width(self.trans_line_layer, width_mm)
+
+    def _on_vector_fixed_toggled(self, on):
+        self.vector_fixed = bool(on)
+        has = self.line_layer is not None and self.line_layer.featureCount() > 0
+        if getattr(self, "spn_vector_len", None) is not None:
+            self.spn_vector_len.setEnabled(bool(on) and has)
+        if self.source is not None:
+            self._apply_filters_now()
+
+    def _on_vector_len(self, value):
+        try:
+            self.vector_len_cm = max(0.5, float(value))
+        except (TypeError, ValueError):
+            self.vector_len_cm = L.VECTOR_LEN_CM_DEFAULT
+        if self.vector_fixed and self.source is not None:
+            self._apply_filters_now()
+
     def _on_arrow_size(self, value):
         self.arrow_size = L.arrow_mm_from_slider(value)
-        self.lbl_arrow.setText('%.2f mm' % self.arrow_size)
+        self.lbl_arrow.setText("%.2f mm" % self.arrow_size)
         if self.line_layer is None:
             return
-        L.apply_arrow_size(self.line_layer, self.arrow_size)
-        L.apply_arrow_size(self.long_line_layer, self.arrow_size)
-        L.apply_arrow_size(self.trans_line_layer, self.arrow_size)
+        # Full restyle (not only mutate symbol layers): after Fixed rebuilds the
+        # geometries, in-place MarkerLine size updates can look like a no-op.
+        L.style_lines_by_group(
+            self.line_layer,
+            self.group_field,
+            width=self._line_width(),
+            head=self.arrow_size,
+            values=list(self._group_btns)
+            if getattr(self, "_group_btns", None)
+            else None,
+            cmap=self.colors,
+        )
+        L.copy_renderer(self.line_layer, self.long_line_layer)
+        L.copy_renderer(self.line_layer, self.trans_line_layer)
         self.plan.canvas.refresh()
         self.longp.canvas.refresh()
         self.transp.canvas.refresh()
@@ -6506,14 +8122,24 @@ class ARSYSDock(QMainWindow):
 
     def _density_widgets(self):
         return (
-            self.btn_dens_heat, self.btn_dens_iso, self.btn_dens_both,
-            self.btn_dens_cloud, self.btn_dens_bands,
-            self.spn_dens_radius, self.btn_dens_auto, self.spn_dens_cell,
-            self.cmb_dens_kernel, self.cmb_dens_scheme,
+            self.btn_dens_heat,
+            self.btn_dens_iso,
+            self.btn_dens_both,
+            self.btn_dens_cloud,
+            self.btn_dens_bands,
+            self.spn_dens_radius,
+            self.btn_dens_auto,
+            self.spn_dens_cell,
+            self.cmb_dens_kernel,
+            self.cmb_dens_scheme,
             self.chk_dens_invert,
-            self.spn_dens_min, self.spn_dens_max, self.btn_dens_cut,
-            self.spn_dens_levels, self.chk_dens_labels,
-            self.sld_dens_width, self.sld_dens_op,
+            self.spn_dens_min,
+            self.spn_dens_max,
+            self.btn_dens_cut,
+            self.spn_dens_levels,
+            self.chk_dens_labels,
+            self.sld_dens_width,
+            self.sld_dens_op,
         )
 
     def _sync_density_controls(self):
@@ -6523,12 +8149,12 @@ class ARSYSDock(QMainWindow):
         if on:
             self.spn_dens_levels.setEnabled(True)
             self.chk_dens_labels.setEnabled(True)
-            iso_on = self.density_mode in ('contours', 'both') or (
+            iso_on = self.density_mode in ("contours", "both") or (
                 self.chk_dens_labels.isChecked()
             )
             self.sld_dens_width.setEnabled(iso_on)
-            self.sld_dens_op.setEnabled(self.density_mode in ('heatmap', 'both'))
-            fill_on = self.density_mode in ('heatmap', 'both')
+            self.sld_dens_op.setEnabled(self.density_mode in ("heatmap", "both"))
+            fill_on = self.density_mode in ("heatmap", "both")
             self.btn_dens_cloud.setEnabled(fill_on)
             self.btn_dens_bands.setEnabled(fill_on)
             self.cmb_dens_scheme.setEnabled(True)
@@ -6549,7 +8175,7 @@ class ARSYSDock(QMainWindow):
                 self._sync_density_controls()
             return
         self.density_on = on
-        self._select_draw_mode('none' if self.density_on else 'points')
+        self._select_draw_mode("none" if self.density_on else "points")
         if self.density_on and self.source is not None:
             self._auto_density_params(rebuild=False)
         self._sync_density_controls()
@@ -6560,9 +8186,12 @@ class ARSYSDock(QMainWindow):
             self._refresh_canvases()
             self._refresh_density_scale()
         view3d.refresh_open_views(
-            self.iface, self.source, self.group_field,
+            self.iface,
+            self.source,
+            self.group_field,
             display_mode=self._draw_mode_for_3d(),
             arrow_size=self.arrow_size,
+            **self._vector_draw_kwargs(),
         )
 
     def _set_density_mode(self, mode):
@@ -6574,7 +8203,7 @@ class ARSYSDock(QMainWindow):
             self._refresh_density_scale()
 
     def _set_density_fill(self, fill):
-        self.density_fill = 'cloud' if fill == 'cloud' else 'bands'
+        self.density_fill = "cloud" if fill == "cloud" else "bands"
         if self.density_on:
             self._apply_density_stretch()
 
@@ -6606,7 +8235,7 @@ class ARSYSDock(QMainWindow):
             return
         radius, pixel = D.suggest_params(self.source)
         # Auto aims for a smooth on-screen grid; manual Cell keeps the spin value.
-        canvas = getattr(getattr(self, 'plan', None), 'canvas', None)
+        canvas = getattr(getattr(self, "plan", None), "canvas", None)
         if canvas is not None:
             cw = int(canvas.width() or 0)
             ch = int(canvas.height() or 0)
@@ -6618,7 +8247,11 @@ class ARSYSDock(QMainWindow):
                     dpr = float(canvas.devicePixelRatio())
             dpr = max(1.0, dpr)
             prev = D.preview_pixel(
-                self.source.extent(), cw, ch, radius, device_pixel_ratio=dpr,
+                self.source.extent(),
+                cw,
+                ch,
+                radius,
+                device_pixel_ratio=dpr,
             )
             pixel = min(float(pixel), float(prev))
         self.spn_dens_radius.blockSignals(True)
@@ -6637,11 +8270,11 @@ class ARSYSDock(QMainWindow):
         return sid if sid else D.DEFAULT_SCHEME
 
     def _density_invert(self):
-        return bool(getattr(self, 'density_invert', False))
+        return bool(getattr(self, "density_invert", False))
 
     def _refresh_scheme_icons(self):
         inv = self._density_invert()
-        cmb = getattr(self, 'cmb_dens_scheme', None)
+        cmb = getattr(self, "cmb_dens_scheme", None)
         if cmb is None:
             return
         cmb.blockSignals(True)
@@ -6662,7 +8295,7 @@ class ARSYSDock(QMainWindow):
         mx = float(self.spn_dens_max.value())
         limits = D.raster_limits(self._plan_density_raster())
         if limits is not None:
-            dmax = float(limits['max'])
+            dmax = float(limits["max"])
             mn = min(max(0.0, mn), dmax)
             mx = min(max(mn, mx), dmax)
             if mx <= mn:
@@ -6670,9 +8303,7 @@ class ARSYSDock(QMainWindow):
         return mn, mx
 
     def _clip_spins_busy(self):
-        return bool(
-            self.spn_dens_min.hasFocus() or self.spn_dens_max.hasFocus()
-        )
+        return bool(self.spn_dens_min.hasFocus() or self.spn_dens_max.hasFocus())
 
     def _on_density_clip(self, *_args):
         self._dens_stretch_user = True
@@ -6686,14 +8317,14 @@ class ARSYSDock(QMainWindow):
         self._schedule_density_stretch()
 
     def _plan_density_raster(self):
-        rst, _ctr = D.split_pair(self._density.get('plan'))
+        rst, _ctr = D.split_pair(self._density.get("plan"))
         return rst
 
     def _first_density_raster(self):
         rst = self._plan_density_raster()
         if rst is not None:
             return rst
-        for key in ('long', 'trans'):
+        for key in ("long", "trans"):
             rst, _ctr = D.split_pair(self._density.get(key))
             if rst is not None:
                 return rst
@@ -6712,7 +8343,7 @@ class ARSYSDock(QMainWindow):
         limits = D.raster_limits(rlayer) if rlayer is not None else None
         if limits is None:
             return
-        dmax = float(limits['max'])
+        dmax = float(limits["max"])
         if dmax <= 0:
             return
         if self._clip_spins_busy() and not reset:
@@ -6733,7 +8364,7 @@ class ARSYSDock(QMainWindow):
             spn.setDecimals(2)
             spn.setSingleStep(step)
         if apply_auto:
-            self.spn_dens_min.setValue(float(limits['cut_low']))
+            self.spn_dens_min.setValue(float(limits["cut_low"]))
             self.spn_dens_max.setValue(dmax)
             self._dens_stretch_user = False
             self._sync_auto_buttons()
@@ -6743,27 +8374,28 @@ class ARSYSDock(QMainWindow):
 
     def _set_clip_tooltips(self, plan_peak=None):
         """Min/Max are plan-absolute in the UI, applied as peak fractions."""
-        peak = ''
+        peak = ""
         if plan_peak is not None and float(plan_peak) > 0:
-            peak = 'Plan **peak cell** is now **%.4g** (reference for all views).' % (
+            peak = "Plan **peak cell** is now **%.4g** (reference for all views)." % (
                 float(plan_peak),
             )
         min_tip = L.html_tooltip(
-            '**Min** colour cut for the density surface (absolute value from Plan).',
-            'Applied as the same share of each view’s peak (Plan, Longitudinal, Transversal).',
-            'Values below Min are not painted.',
-            peak or '**Auto:** Min ≈ 2% of positive Plan cells.',
+            "**Min** colour cut for the density surface (absolute value from Plan).",
+            "Applied as the same share of each view’s peak (Plan, Longitudinal, Transversal).",
+            "Values below Min are not painted.",
+            peak or "**Auto:** Min ≈ 2% of positive Plan cells.",
         )
         max_tip = L.html_tooltip(
-            '**Max** colour cut for the density surface (absolute value from Plan).',
-            'Applied as the same share of each view’s peak (Plan, Longitudinal, Transversal).',
-            peak or '**Auto:** Max = Plan peak (100% of each local peak; tips stay visible).',
+            "**Max** colour cut for the density surface (absolute value from Plan).",
+            "Applied as the same share of each view’s peak (Plan, Longitudinal, Transversal).",
+            peak
+            or "**Auto:** Max = Plan peak (100% of each local peak; tips stay visible).",
         )
         for widget, tip in (
-            (getattr(self, 'spn_dens_min', None), min_tip),
-            (getattr(self, 'lbl_dens_min', None), min_tip),
-            (getattr(self, 'spn_dens_max', None), max_tip),
-            (getattr(self, 'lbl_dens_max', None), max_tip),
+            (getattr(self, "spn_dens_min", None), min_tip),
+            (getattr(self, "lbl_dens_min", None), min_tip),
+            (getattr(self, "spn_dens_max", None), max_tip),
+            (getattr(self, "lbl_dens_max", None), max_tip),
         ):
             if widget is not None:
                 widget.setToolTip(tip)
@@ -6813,8 +8445,15 @@ class ARSYSDock(QMainWindow):
                 continue
             clip_min, clip_max = self._clip_for_raster(rst)
             self._density[key] = D.restyle_pair(
-                rst, ctr, mode, levels, opacity, scheme=scheme,
-                labels=labels, clip_min=clip_min, clip_max=clip_max,
+                rst,
+                ctr,
+                mode,
+                levels,
+                opacity,
+                scheme=scheme,
+                labels=labels,
+                clip_min=clip_min,
+                clip_max=clip_max,
                 fill=self.density_fill,
                 line_width=self._isoline_width(),
                 invert=self._density_invert(),
@@ -6826,13 +8465,13 @@ class ARSYSDock(QMainWindow):
 
     def _refresh_density_scale(self):
         """Show/hide the horizontal density scale in the Resources panel."""
-        bar = getattr(self, '_dens_scale', None)
-        inv = getattr(self, 'chk_dens_invert', None)
+        bar = getattr(self, "_dens_scale", None)
+        inv = getattr(self, "chk_dens_invert", None)
         if bar is None:
             return
         if (
             not self.density_on
-            or self.density_mode == 'contours'
+            or self.density_mode == "contours"
             or self.source is None
         ):
             bar.clear()
@@ -6851,27 +8490,32 @@ class ARSYSDock(QMainWindow):
             return
         scheme = self._density_scheme()
         opacity = max(0.15, self.sld_dens_op.value() / 100.0)
-        with_heat = self.density_mode in ('heatmap', 'both')
+        with_heat = self.density_mode in ("heatmap", "both")
         styled = False
         for pair in self._density.values():
             rst, ctr = D.split_pair(pair)
             if rst is not None:
                 clip_min, clip_max = self._clip_for_raster(rst)
                 D.style_heatmap(
-                    rst, opacity=opacity, scheme=scheme,
+                    rst,
+                    opacity=opacity,
+                    scheme=scheme,
                     levels=self.spn_dens_levels.value(),
-                    clip_min=clip_min, clip_max=clip_max,
+                    clip_min=clip_min,
+                    clip_max=clip_max,
                     fill=self.density_fill,
                     invert=self._density_invert(),
                 )
                 styled = True
             if ctr is not None:
                 D.style_contours(
-                    ctr, with_heatmap=with_heat, scheme=scheme,
+                    ctr,
+                    with_heatmap=with_heat,
+                    scheme=scheme,
                     labels=self._density_labels_on(),
                     width=self._isoline_width(),
                     invert=self._density_invert(),
-                    theme_name=UI_THEME.get('name'),
+                    theme_name=UI_THEME.get("name"),
                 )
                 styled = True
         if styled:
@@ -6889,7 +8533,7 @@ class ARSYSDock(QMainWindow):
         if not self.density_on:
             return
         on = self._density_labels_on()
-        if self.density_mode == 'heatmap':
+        if self.density_mode == "heatmap":
             self._apply_density_stretch()
             return
         for pair in self._density.values():
@@ -6906,26 +8550,29 @@ class ARSYSDock(QMainWindow):
 
     def _on_density_width(self, value):
         mm = max(0.0, min(1.0, int(value) / 100.0))
-        self.lbl_dens_width.setText('%.2f mm' % mm)
+        self.lbl_dens_width.setText("%.2f mm" % mm)
         if not self.density_on:
             return
-        with_heat = self.density_mode in ('heatmap', 'both')
+        with_heat = self.density_mode in ("heatmap", "both")
         styled = False
         for pair in self._density.values():
             _rst, ctr = D.split_pair(pair)
             if ctr is not None:
                 D.style_contours(
-                    ctr, with_heatmap=with_heat, scheme=self._density_scheme(),
-                    labels=self._density_labels_on(), width=mm,
+                    ctr,
+                    with_heatmap=with_heat,
+                    scheme=self._density_scheme(),
+                    labels=self._density_labels_on(),
+                    width=mm,
                     invert=self._density_invert(),
-                    theme_name=UI_THEME.get('name'),
+                    theme_name=UI_THEME.get("name"),
                 )
                 styled = True
         if styled:
             self._refresh_canvases()
 
     def _on_density_opacity(self, value):
-        self.lbl_dens_op.setText('%d%%' % int(value))
+        self.lbl_dens_op.setText("%d%%" % int(value))
         op = max(0.15, int(value) / 100.0)
         for pair in self._density.values():
             rst, _ctr = D.split_pair(pair)
@@ -6960,28 +8607,37 @@ class ARSYSDock(QMainWindow):
         opacity = max(0.15, self.sld_dens_op.value() / 100.0)
         mode = self.density_mode
         jobs = (
-            ('plan', self.source),
-            ('long', self.long_layer),
-            ('trans', self.trans_layer),
+            ("plan", self.source),
+            ("long", self.long_layer),
+            ("trans", self.trans_layer),
         )
         new_pairs = {}
         try:
-            with _qgis_busy('ARSYSplotQGIS: density'):
+            with _qgis_busy("ARSYSplotQGIS: density"):
                 for key, lyr in jobs:
                     if lyr is None or lyr.featureCount() < 2:
                         new_pairs[key] = (None, None)
                         continue
                     rad, pix = D.adapt_kernel(
-                        lyr, radius, pixel,
-                        None if key == 'plan' else self.source,
+                        lyr,
+                        radius,
+                        pixel,
+                        None if key == "plan" else self.source,
                     )
                     # UI Cell drives the KDE grid. Safety bounds (crest / memory)
                     # stay inside build_heatmap → _clamp_pixel.
                     new_pairs[key] = D.build_pair(
-                        lyr, rad, pix, kernel, mode, levels, opacity,
+                        lyr,
+                        rad,
+                        pix,
+                        kernel,
+                        mode,
+                        levels,
+                        opacity,
                         scheme=self._density_scheme(),
                         labels=self._density_labels_on(),
-                        clip_min=None, clip_max=None,
+                        clip_min=None,
+                        clip_max=None,
                         fill=self.density_fill,
                         line_width=self._isoline_width(),
                         invert=self._density_invert(),
@@ -6989,8 +8645,7 @@ class ARSYSDock(QMainWindow):
         except Exception as exc:
             self._drop_density_layers()
             QMessageBox.warning(
-                self, 'Density',
-                'Could not build the density surface.\n%s' % exc
+                self, "Density", "Could not build the density surface.\n%s" % exc
             )
             self.density_on = False
             self._sync_density_controls()
@@ -7001,11 +8656,11 @@ class ARSYSDock(QMainWindow):
         self._drop_density_layers()
         self._density = new_pairs
         # Reflect the cell actually used by KDE (after memory/radius clamps).
-        plan_rst, _ = D.split_pair(self._density.get('plan'))
+        plan_rst, _ = D.split_pair(self._density.get("plan"))
         if plan_rst is not None:
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-                raw = plan_rst.customProperty('arsysplotqgis_cell')
-                if raw not in (None, ''):
+                raw = plan_rst.customProperty("arsysplotqgis_cell")
+                if raw not in (None, ""):
                     eff = float(raw)
                     if abs(eff - float(self.spn_dens_cell.value())) > 1e-9:
                         self.spn_dens_cell.blockSignals(True)
@@ -7026,8 +8681,15 @@ class ARSYSDock(QMainWindow):
                     continue
                 clip_min, clip_max = self._clip_for_raster(r)
                 self._density[key] = D.restyle_pair(
-                    r, c, mode, levels, opacity, scheme=scheme,
-                    labels=labels, clip_min=clip_min, clip_max=clip_max,
+                    r,
+                    c,
+                    mode,
+                    levels,
+                    opacity,
+                    scheme=scheme,
+                    labels=labels,
+                    clip_min=clip_min,
+                    clip_max=clip_max,
                     fill=self.density_fill,
                     line_width=self._isoline_width(),
                     invert=self._density_invert(),
@@ -7044,65 +8706,65 @@ class ARSYSDock(QMainWindow):
     def _pane_key_and_points(self, pane):
         """Map a pane (main or zoom clone) to density key + point layer."""
         if pane is self.plan:
-            return 'plan', self.source
+            return "plan", self.source
         if pane is self.longp:
-            return 'long', self.long_layer
+            return "long", self.long_layer
         if pane is self.transp:
-            return 'trans', self.trans_layer
-        role = getattr(pane, 'pane_role', None)
-        if role == 'plan':
-            return 'plan', self.source
-        if role == 'long':
-            return 'long', self.long_layer
-        if role == 'trans':
-            return 'trans', self.trans_layer
-        h = getattr(pane, 'h_axis', None)
-        v = getattr(pane, 'v_axis', None)
-        if h == 'x' and v == 'y':
-            return 'plan', self.source
-        if h == 'x' and v == 'z':
-            return 'long', self.long_layer
-        if h == 'offset' and v == 'z':
-            return 'trans', self.trans_layer
-        if h == 'y' and v == 'z':
+            return "trans", self.trans_layer
+        role = getattr(pane, "pane_role", None)
+        if role == "plan":
+            return "plan", self.source
+        if role == "long":
+            return "long", self.long_layer
+        if role == "trans":
+            return "trans", self.trans_layer
+        h = getattr(pane, "h_axis", None)
+        v = getattr(pane, "v_axis", None)
+        if h == "x" and v == "y":
+            return "plan", self.source
+        if h == "x" and v == "z":
+            return "long", self.long_layer
+        if h == "offset" and v == "z":
+            return "trans", self.trans_layer
+        if h == "y" and v == "z":
             # Classic TRANS. Profile LONG-as-Y must set pane_role='long'.
-            return 'trans', self.trans_layer
+            return "trans", self.trans_layer
         return None, None
 
     def _pane_fit_layers(self, pane):
         """Point (and visible vector) layers that define the data footprint."""
         key, pts = self._pane_key_and_points(pane)
-        if key == 'plan':
+        if key == "plan":
             lines = self.line_layer
-        elif key == 'long':
+        elif key == "long":
             lines = self.long_line_layer
-        elif key == 'trans':
+        elif key == "trans":
             lines = self.trans_line_layer
         else:
             return []
         out = []
         if pts is not None:
             out.append(pts)
-        if self.display_mode in ('vectors', 'both') and lines is not None:
+        if self.display_mode in ("vectors", "both") and lines is not None:
             out.append(lines)
         return out
 
     def _pane_draw_layers(self, pane):
         """Points / vectors only (no density) for the current Draw mode."""
         key, pts = self._pane_key_and_points(pane)
-        if key == 'plan':
+        if key == "plan":
             lines = self.line_layer
-        elif key == 'long':
+        elif key == "long":
             lines = self.long_line_layer
-        elif key == 'trans':
+        elif key == "trans":
             lines = self.trans_line_layer
         else:
             return []
         mode = self.display_mode
         out = []
-        if mode in ('points', 'both') and pts is not None:
+        if mode in ("points", "both") and pts is not None:
             out.append(pts)
-        if mode in ('vectors', 'both') and lines is not None:
+        if mode in ("vectors", "both") and lines is not None:
             out.append(lines)
         return out
 
@@ -7119,8 +8781,10 @@ class ARSYSDock(QMainWindow):
         if kernel is None:
             kernel = 0
         rad, _pix = D.adapt_kernel(
-            pts, radius, pixel_ui,
-            None if key == 'plan' else self.source,
+            pts,
+            radius,
+            pixel_ui,
+            None if key == "plan" else self.source,
         )
         pix = D.paper_pixel(world, plot_w, plot_h, rad)
         mode = self.density_mode
@@ -7132,18 +8796,39 @@ class ARSYSDock(QMainWindow):
         line_width = self._isoline_width()
         invert = self._density_invert()
         rst, ctr = D.build_paper_pair(
-            pts, rad, pix, kernel, mode, levels, opacity,
-            scheme=scheme, labels=labels,
-            clip_min=None, clip_max=None,
-            fill=fill, line_width=line_width, invert=invert,
+            pts,
+            rad,
+            pix,
+            kernel,
+            mode,
+            levels,
+            opacity,
+            scheme=scheme,
+            labels=labels,
+            clip_min=None,
+            clip_max=None,
+            fill=fill,
+            line_width=line_width,
+            invert=invert,
         )
         if rst is None:
             return None, None
         clip_min, clip_max = self._clip_for_raster(rst)
+        # Keep for_paper so isolines stay black (not UI theme ink).
         rst, ctr = D.restyle_pair(
-            rst, ctr, mode, levels, opacity, scheme=scheme,
-            labels=labels, clip_min=clip_min, clip_max=clip_max,
-            fill=fill, line_width=line_width, invert=invert,
+            rst,
+            ctr,
+            mode,
+            levels,
+            opacity,
+            scheme=scheme,
+            labels=labels,
+            clip_min=clip_min,
+            clip_max=clip_max,
+            fill=fill,
+            line_width=line_width,
+            invert=invert,
+            for_paper=True,
         )
         if labels and ctr is not None:
             D.style_contour_labels(ctr, on=True, size_pt=label_size_pt)
@@ -7157,7 +8842,7 @@ class ARSYSDock(QMainWindow):
             # QgsMapCanvas: first = topmost. Isolines above KDE raster fill.
             if ctr is not None:
                 out.append(ctr)
-            if self.density_mode in ('heatmap', 'both') and rst is not None:
+            if self.density_mode in ("heatmap", "both") and rst is not None:
                 out.append(rst)
         return out
 
@@ -7165,10 +8850,10 @@ class ARSYSDock(QMainWindow):
         self._user_picked_draw = True
         self.display_mode = mode
         mapping = {
-            'points': self.btn_draw_points,
-            'vectors': self.btn_draw_vectors,
-            'both': self.btn_draw_both,
-            'none': self.btn_draw_none,
+            "points": self.btn_draw_points,
+            "vectors": self.btn_draw_vectors,
+            "both": self.btn_draw_both,
+            "none": self.btn_draw_none,
         }
         btn = mapping.get(mode)
         if btn is None:
@@ -7181,31 +8866,49 @@ class ARSYSDock(QMainWindow):
         self._select_draw_mode(mode)
         self._refresh_canvases()
         view3d.refresh_open_views(
-            self.iface, self.source, self.group_field,
+            self.iface,
+            self.source,
+            self.group_field,
             display_mode=self._draw_mode_for_3d(),
             arrow_size=self.arrow_size,
+            **self._vector_draw_kwargs(),
         )
 
     def _draw_mode_for_3d(self):
-        return 'points' if self.display_mode == 'none' else self.display_mode
+        return "points" if self.display_mode == "none" else self.display_mode
+
+    def _vector_draw_kwargs(self):
+        return {
+            "vector_fixed": bool(getattr(self, "vector_fixed", False)),
+            "vector_len_cm": float(
+                getattr(self, "vector_len_cm", L.VECTOR_LEN_CM_DEFAULT)
+                or L.VECTOR_LEN_CM_DEFAULT
+            ),
+        }
 
     def _sync_draw_buttons(self):
         has = self.line_layer is not None and self.line_layer.featureCount() > 0
         self.btn_draw_vectors.setEnabled(has)
         self.btn_draw_both.setEnabled(has)
         self.sld_arrow.setEnabled(has)
-        if not has and self.display_mode in ('vectors', 'both'):
-            self.display_mode = 'points'
+        if getattr(self, "chk_vector_fixed", None) is not None:
+            self.chk_vector_fixed.setEnabled(has)
+        if getattr(self, "spn_vector_len", None) is not None:
+            self.spn_vector_len.setEnabled(
+                has and bool(getattr(self, "vector_fixed", False))
+            )
+        if not has and self.display_mode in ("vectors", "both"):
+            self.display_mode = "points"
         mapping = {
-            'points': self.btn_draw_points,
-            'vectors': self.btn_draw_vectors,
-            'both': self.btn_draw_both,
-            'none': self.btn_draw_none,
+            "points": self.btn_draw_points,
+            "vectors": self.btn_draw_vectors,
+            "both": self.btn_draw_both,
+            "none": self.btn_draw_none,
         }
         btn = mapping.get(self.display_mode, self.btn_draw_points)
         if not btn.isEnabled():
             btn = self.btn_draw_points
-            self.display_mode = 'points'
+            self.display_mode = "points"
         btn.blockSignals(True)
         btn.setChecked(True)
         btn.blockSignals(False)
@@ -7213,6 +8916,14 @@ class ARSYSDock(QMainWindow):
     def _layer_for_pane(self, pane):
         layers = self._pane_layers(pane)
         return layers[0] if layers else None
+
+    def _sync_zoom_controls(self, rebuild_chips=False, skip=None):
+        """Push Point size / Model / Group chips to open zoom windows."""
+        for win in list(getattr(self, "_zoom_windows", {}).values()):
+            if win is None or win is skip:
+                continue
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                win.sync_from_dock(rebuild_chips=rebuild_chips)
 
     def _open_zoom(self, pane):
         layers = self._pane_layers(pane)
@@ -7227,12 +8938,26 @@ class ARSYSDock(QMainWindow):
         if alive:
             with suppress(AttributeError, RuntimeError, TypeError, ValueError):
                 win.reload(layers, pane.canvas)
+                win.sync_from_dock(rebuild_chips=True)
+                zp = getattr(win, "pane", None)
+                self._wire_pane_hover(zp)
+                self._wire_pane_point_click(zp)
+                xyz = getattr(self, "_selected_xyz", None)
+                if xyz is not None:
+                    self._apply_selection_marks(xyz)
                 win.show()
                 win.raise_()
                 win.activateWindow()
                 return
         win = ZoomWindow(pane, layers, parent=self)
         self._zoom_windows[key] = win
+        zp = getattr(win, "pane", None)
+        self._wire_pane_hover(zp)
+        self._wire_pane_point_click(zp)
+        xyz = getattr(self, "_selected_xyz", None)
+        if xyz is not None:
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                self._apply_selection_marks(xyz)
         win.show()
         win.raise_()
         win.activateWindow()
@@ -7268,24 +8993,30 @@ class ARSYSDock(QMainWindow):
         prof_ready = self._profile_is_ready()
         sec_adaptive = True if prof_ready else adaptive
         self.plan.show_layer(
-            self._pane_layers(self.plan), adaptive=adaptive,
+            self._pane_layers(self.plan),
+            adaptive=adaptive,
             fit_from=self._pane_fit_layers(self.plan),
         )
         self.longp.show_layer(
-            self._pane_layers(self.longp), adaptive=sec_adaptive,
+            self._pane_layers(self.longp),
+            adaptive=sec_adaptive,
             fit_from=self._pane_fit_layers(self.longp),
         )
         self.transp.show_layer(
-            self._pane_layers(self.transp), adaptive=sec_adaptive,
+            self._pane_layers(self.transp),
+            adaptive=sec_adaptive,
             fit_from=self._pane_fit_layers(self.transp),
         )
         self._refresh_zooms()
 
     def open_3d(self):
-        with _qgis_busy('ARSYSplotQGIS: 3D view'):
+        with _qgis_busy("ARSYSplotQGIS: 3D view"):
             view3d.open_3d_view(
-                self.iface, self.source, parent=self,
+                self.iface,
+                self.source,
+                parent=self,
                 group_field=self.group_field,
                 display_mode=self._draw_mode_for_3d(),
                 arrow_size=self.arrow_size,
+                **self._vector_draw_kwargs(),
             )

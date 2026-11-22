@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import math
 from contextlib import suppress
 from qgis.core import (
     NULL,
@@ -18,13 +19,15 @@ from qgis.core import (
     QgsRectangle,
     QgsRendererCategory,
     QgsSimpleLineSymbolLayer,
+    QgsUnitTypes,
     QgsVectorLayer,
     QgsWkbTypes,
 )
 from qgis.PyQt.QtCore import QVariant, Qt
-from qgis.PyQt.QtGui import QColor
+from qgis.PyQt.QtGui import QColor, QFont, QFontMetrics
 
 from .colors_util import color_map, qgis_color
+from . import vector_angles as VA
 
 # Ink for rich-text tooltips (inverse of UI: dark tip → cream, light tip → dark).
 # Tip chrome (kept in sync with dock.tooltip_palette via set_tooltip_chrome).
@@ -46,19 +49,39 @@ def set_tooltip_chrome(bg, ink):
     TOOLTIP_INK = str(ink or '').strip() or '#1a1816'
 
 
-# Comfortable tip column for QTextDocument (≈ 48–52 chars at 11px).
+# Wrap ceiling for long tips (≈ 48–52 chars at 11px). Short tips shrink to content.
 TOOLTIP_MAX_WIDTH_PX = 340
+TOOLTIP_MIN_WIDTH_PX = 80
+# Bold + QToolTip chrome slack beyond plain QFontMetrics.
+TOOLTIP_PAD_PX = 16
+
+
+def _tooltip_plain_width_px(parts):
+    """Widest paragraph width in px (11px font; ``**`` markers stripped)."""
+    font = QFont()
+    font.setPixelSize(11)
+    fm = QFontMetrics(font)
+    widest = 0
+    for part in parts:
+        plain = str(part).replace('**', '')
+        if hasattr(fm, 'horizontalAdvance'):
+            w = int(fm.horizontalAdvance(plain))
+        else:
+            w = int(fm.width(plain))
+        if w > widest:
+            widest = w
+    return widest + TOOLTIP_PAD_PX
 
 
 def html_tooltip(*parts, width=None):
     """Compact QToolTip: **bold** markers, forced tip colours, natural wrap.
 
     Each argument is one sentence/paragraph (soft ``<br/>`` between them).
-    Word wrapping is left to Qt via a fixed table width — do **not** insert
-    hard breaks per character column (that re-wraps badly and leaves
-    one-word lines when the tip window is narrower than the estimate).
+    Table width fits the content up to a max (default 340 px) so short tips
+    are not padded to full column width. Do **not** insert hard breaks per
+    character column.
 
-    ``width`` is optional tip width in px (≥100) or approx. character columns.
+    ``width`` is optional max tip width in px (≥100) or approx. character columns.
     """
     cleaned = []
     for part in parts:
@@ -77,6 +100,8 @@ def html_tooltip(*parts, width=None):
                 max_px = max(180, min(520, w))
             elif w > 0:
                 max_px = max(180, min(520, w * 7))
+    content_px = _tooltip_plain_width_px(cleaned)
+    tip_px = max(TOOLTIP_MIN_WIDTH_PX, min(max_px, content_px))
     body = '<br/>'.join(_tooltip_markup(text) for text in cleaned)
     # Table width is the reliable wrap constraint for QToolTip rich text.
     return (
@@ -84,7 +109,7 @@ def html_tooltip(*parts, width=None):
         '<table width="%d" cellspacing="0" cellpadding="0" border="0">'
         '<tr><td style="font-size:11px; line-height:1.4; color:%s; '
         'white-space:normal;">%s</td></tr></table>'
-        '</body></html>' % (TOOLTIP_BG, TOOLTIP_INK, max_px, TOOLTIP_INK, body)
+        '</body></html>' % (TOOLTIP_BG, TOOLTIP_INK, tip_px, TOOLTIP_INK, body)
     )
 
 
@@ -125,8 +150,9 @@ VECTOR_EPS = 1e-4
 ARROW_SLIDER_MAX = 100
 ARROW_MM_MIN = 0.35
 ARROW_MM_MAX = 4.2
-ARROW_MM_DEFAULT = 1.6
+ARROW_MM_DEFAULT = 1.03
 ARROW_SLIDER_GAMMA = 1.75
+VECTOR_LEN_CM_DEFAULT = 30.0
 
 
 def arrow_mm_from_slider(value):
@@ -187,8 +213,8 @@ def _len2(a, b):
     return dx * dx + dy * dy + dz * dz
 
 
-def vector_endpoints(feat):
-    """P2→P3 after import. Legacy P1→P2 if P3 is still missing. None if no axis."""
+def vector_axis_raw(feat):
+    """Geometric axis ends before sense flip: P2→P3, or legacy P1→P2."""
     p1 = xyz_from_prefix(feat, 'p1')
     p2 = xyz_from_prefix(feat, 'p2')
     p3 = xyz_from_prefix(feat, 'p3')
@@ -200,6 +226,202 @@ def vector_endpoints(feat):
         if _len2(p1, p2) > VECTOR_EPS * VECTOR_EPS:
             return p1, p2
     return None
+
+
+def vector_endpoints(feat, options=None):
+    """Directed axis for drawing / angles (improved method may reverse sense).
+
+    Geometric support is still P2→P3 after import (legacy P1→P2 if P3 missing).
+    The returned ``(from, to)`` follows the improved adaptive flip so the arrow
+    points with the inclination sense (downslope when Δz is significant).
+    """
+    raw = vector_axis_raw(feat)
+    if raw is None:
+        return None
+    directed = VA.directed_segment(raw[0], raw[1], options)
+    return directed if directed is not None else raw
+
+
+def vector_angles(feat, options=None):
+    """``{orientacio, inclinacio, length, flipped}`` from the feature axis, or None."""
+    raw = vector_axis_raw(feat)
+    if raw is None:
+        return None
+    return VA.compute_angles(raw[0], raw[1], options)
+
+
+def _finite_attr(value):
+    if value is None:
+        return False
+    with suppress(TypeError, ValueError):
+        if value == NULL or value is NULL:
+            return False
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        if hasattr(value, 'isNull') and value.isNull():
+            return False
+    with suppress(TypeError, ValueError):
+        return math.isfinite(float(value))
+    return False
+
+
+def ensure_angle_fields(layer):
+    """Guarantee ``G_orientacio`` / ``G_pendent`` double fields on the source layer."""
+    if layer is None:
+        return False
+    have = {f.name() for f in layer.fields()}
+    extra = [
+        QgsField(key, QVariant.Double)
+        for key in ('G_orientacio', 'G_pendent')
+        if key not in have
+    ]
+    if not extra:
+        return False
+    layer.dataProvider().addAttributes(extra)
+    layer.updateFields()
+    return True
+
+
+def fill_vector_angles(layer, force=False, options=None):
+    """Write ``G_orientacio`` / ``G_pendent`` from the improved P2→P3 method.
+
+    When ``force`` is False, existing finite file values are kept.
+    Ignores the current Group/XYZ subset so every row is considered.
+    Returns ``(updated, skipped_no_axis)``.
+    """
+    if layer is None:
+        return 0, 0
+    ensure_angle_fields(layer)
+    i_o = layer.fields().indexOf('G_orientacio')
+    i_p = layer.fields().indexOf('G_pendent')
+    if i_o < 0 or i_p < 0:
+        return 0, 0
+
+    # Subset would hide filtered rows from getFeatures — recalculate the full table.
+    prev_subset = ''
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        prev_subset = layer.subsetString() or ''
+    changes = {}
+    updated = 0
+    skipped = 0
+    try:
+        if prev_subset:
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                layer.setSubsetString('')
+        for feat in layer.getFeatures():
+            fid = feat.id()
+            raw = vector_axis_raw(feat)
+            if raw is None:
+                skipped += 1
+                if force:
+                    attrs = {}
+                    if _finite_attr(feat[i_o]):
+                        attrs[i_o] = None
+                    if _finite_attr(feat[i_p]):
+                        attrs[i_p] = None
+                    if attrs:
+                        changes[fid] = attrs
+                        updated += 1
+                continue
+            angles = VA.compute_angles(raw[0], raw[1], options)
+            if not angles:
+                skipped += 1
+                continue
+            attrs = {}
+            if force:
+                # Always write both fields (None clears azimuth on vertical axes).
+                o = angles.get('orientacio')
+                p = angles.get('inclinacio')
+                attrs[i_o] = float(o) if o is not None else None
+                attrs[i_p] = float(p) if p is not None else None
+            else:
+                if not _finite_attr(feat[i_o]) and angles.get('orientacio') is not None:
+                    attrs[i_o] = float(angles['orientacio'])
+                if not _finite_attr(feat[i_p]) and angles.get('inclinacio') is not None:
+                    attrs[i_p] = float(angles['inclinacio'])
+            if attrs:
+                changes[fid] = attrs
+                updated += 1
+        if changes:
+            # Edit buffer refreshes the layer attribute cache; provider-only
+            # writes can leave stale values in Point info / subsequent reads.
+            wrote = False
+            started = False
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                if not layer.isEditable():
+                    started = bool(layer.startEditing())
+            if layer.isEditable():
+                for fid, attrs in changes.items():
+                    for idx, val in attrs.items():
+                        with suppress(
+                            AttributeError, RuntimeError, TypeError, ValueError
+                        ):
+                            layer.changeAttributeValue(
+                                fid, idx, NULL if val is None else val
+                            )
+                if started:
+                    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                        wrote = bool(layer.commitChanges())
+                        if not wrote:
+                            layer.rollBack()
+                else:
+                    wrote = True
+            if not wrote:
+                prov_changes = {}
+                for fid, attrs in changes.items():
+                    prov_changes[fid] = {
+                        idx: (NULL if val is None else val)
+                        for idx, val in attrs.items()
+                    }
+                with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                    layer.dataProvider().changeAttributeValues(prov_changes)
+                with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                    if hasattr(layer, 'reload'):
+                        layer.reload()
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                layer.triggerRepaint()
+    finally:
+        if prev_subset:
+            with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                layer.setSubsetString(prev_subset)
+    return updated, skipped
+
+
+def vector_draw_endpoints(feat, fixed=False, fixed_cm=VECTOR_LEN_CM_DEFAULT,
+                          options=None):
+    """Endpoints for drawing: real directed axis, or fixed length (cm) along it.
+
+    Direction uses the **improved method** (adaptive flip). Fixed shafts are
+    centred on P1 when present, otherwise on the axis midpoint.
+    """
+    ends = vector_endpoints(feat, options=options)
+    if ends is None:
+        return None
+    a, b = ends
+    if not fixed:
+        return a, b
+    try:
+        length_m = max(1e-4, float(fixed_cm) / 100.0)
+    except (TypeError, ValueError):
+        length_m = VECTOR_LEN_CM_DEFAULT / 100.0
+    dx = float(b[0]) - float(a[0])
+    dy = float(b[1]) - float(a[1])
+    dz = float(b[2]) - float(a[2])
+    span = (dx * dx + dy * dy + dz * dz) ** 0.5
+    if span <= VECTOR_EPS:
+        return None
+    ux, uy, uz = dx / span, dy / span, dz / span
+    p1 = xyz_from_prefix(feat, 'p1')
+    if p1 is not None:
+        cx, cy, cz = float(p1[0]), float(p1[1]), float(p1[2])
+    else:
+        cx = 0.5 * (float(a[0]) + float(b[0]))
+        cy = 0.5 * (float(a[1]) + float(b[1]))
+        cz = 0.5 * (float(a[2]) + float(b[2]))
+    half = 0.5 * length_m
+    return (
+        (cx - ux * half, cy - uy * half, cz - uz * half),
+        (cx + ux * half, cy + uy * half, cz + uz * half),
+    )
 
 
 def _line_geom(a, b, with_z=True):
@@ -327,6 +549,7 @@ def clone_as_private_source(layer, name=None):
             'p1x', 'p1y', 'p1z',
             'p2x', 'p2y', 'p2z',
             'p3x', 'p3y', 'p3z',
+            'G_orientacio', 'G_pendent',
         )
         if key not in have
     ]
@@ -391,6 +614,8 @@ def clone_as_private_source(layer, name=None):
                 attrs.append(None if p3 is None else p3[1])
             elif key == 'p3z':
                 attrs.append(None if p3 is None else p3[2])
+            elif key in ('G_orientacio', 'G_pendent') and key in src_names:
+                attrs.append(src[key])
             elif key in src_names:
                 attrs.append(src[key])
             else:
@@ -401,6 +626,8 @@ def clone_as_private_source(layer, name=None):
         raise ValueError('No plottable points in the selected layer')
     dest.dataProvider().addFeatures(feats)
     dest.updateExtents()
+    # Fill missing G_* from the improved P2→P3 method (keep finite file values).
+    fill_vector_angles(dest, force=False)
     dest.setCustomProperty('arsysplotqgis', 'source')
     dest.setCustomProperty('arsysplotqgis_from', layer.id())
     dest.setCustomProperty('arsysplotqgis_vectors', str(int(n_vectors)))
@@ -1193,10 +1420,55 @@ def _set_marker_size(sym, head_mm):
     return False
 
 
+def _arrow_symbol_layer(color, width, head):
+    """QgsArrowSymbolLayer — heads stay visible on short Fixed shafts.
+
+    MarkerLine + filled_arrowhead often drops the tip when the map-projected
+    segment is shorter than the marker (common with Fixed cm lengths).
+    """
+    try:
+        from qgis.core import QgsArrowSymbolLayer
+    except Exception:
+        return None
+    props = {
+        'arrow_width': '%.4g' % width,
+        'arrow_width_unit': 'MM',
+        'arrow_start_width': '%.4g' % width,
+        'arrow_start_width_unit': 'MM',
+        'head_length': '%.4g' % head,
+        'head_length_unit': 'MM',
+        'head_thickness': '%.4g' % max(width * 2.2, head * 0.6),
+        'head_thickness_unit': 'MM',
+        'head_type': '0',
+        'arrow_type': '0',
+        'is_curved': '0',
+        'is_repeated': '0',
+    }
+    lyr = None
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        lyr = QgsArrowSymbolLayer.create(props)
+    if lyr is None:
+        return None
+    c = QColor(color)
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        lyr.setColor(c)
+    return lyr
+
+
 def _line_sym(color, width, head=None):
     width = max(0.2, float(width))
     head = max(ARROW_MM_MIN, float(ARROW_MM_DEFAULT if head is None else head))
     c = QColor(color)
+    arrow_lyr = _arrow_symbol_layer(color, width, head)
+    if arrow_lyr is not None:
+        sym = QgsLineSymbol()
+        if sym.symbolLayerCount() > 0:
+            sym.changeSymbolLayer(0, arrow_lyr)
+        else:
+            sym.appendSymbolLayer(arrow_lyr)
+        _apply_symbol_color(sym, c)
+        return sym
+    # Fallback (older QGIS): simple stroke + MarkerLine arrowhead.
     sym = QgsLineSymbol.createSimple({
         'line_color': qgis_color(c),
         'line_width': str(width),
@@ -1228,16 +1500,36 @@ def _scale_line_symbol(sym, width_mm=None, head_mm=None):
         lyr = sym.symbolLayer(i)
         if lyr is None:
             continue
+        name = type(lyr).__name__
+        if name == 'QgsArrowSymbolLayer':
+            if width_mm is not None:
+                with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                    lyr.setArrowWidth(width_mm)
+                with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                    lyr.setArrowStartWidth(width_mm)
+            if head_mm is not None:
+                with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                    lyr.setHeadLength(head_mm)
+                thick = max(
+                    (width_mm if width_mm is not None else 0.6) * 2.2,
+                    head_mm * 0.6,
+                )
+                with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+                    lyr.setHeadThickness(thick)
+            continue
         if width_mm is not None and isinstance(lyr, QgsSimpleLineSymbolLayer):
             lyr.setWidth(width_mm)
         if head_mm is None:
             continue
-        if type(lyr).__name__ != 'QgsMarkerLineSymbolLayer':
+        is_marker_line = isinstance(lyr, QgsMarkerLineSymbolLayer)
+        if not is_marker_line and name != 'QgsMarkerLineSymbolLayer':
             continue
-        if _set_marker_size(lyr.subSymbol() if hasattr(lyr, 'subSymbol') else None, head_mm):
-            continue
+        # Always rebuild the arrowhead symbol so size/unit stick after geometry
+        # rebuilds (Fixed shafts). In-place setSize can be ignored by QGIS.
         with suppress(AttributeError, RuntimeError, TypeError, ValueError):
             lyr.setSubSymbol(_arrow_marker(_symbol_color(lyr), head_mm))
+            continue
+        _set_marker_size(lyr.subSymbol() if hasattr(lyr, 'subSymbol') else None, head_mm)
 
 
 def style_lines_by_group(layer, field='group', width=0.6, head=None, values=None, cmap=None):
@@ -1395,26 +1687,50 @@ def _symbol_paint_color(sym):
     return QColor('#888888')
 
 
-def _retune_marker_symbol_size(sym, size_mm):
+def _marker_render_unit(size_unit='mm'):
+    """Map ``'mm'`` / ``'px'`` to a QGIS render unit."""
+    unit = str(size_unit or 'mm').strip().lower()
+    ru = QgsUnitTypes.RenderUnit
+    if unit in ('px', 'pixel', 'pixels'):
+        return ru.RenderPixels
+    return ru.RenderMillimeters
+
+
+def _retune_marker_symbol_size(sym, size, size_unit='mm'):
     if sym is None:
         return
-    size_mm = max(0.0, float(size_mm))
+    size = max(0.0, float(size))
+    render_unit = _marker_render_unit(size_unit)
     # Capture paint colour *before* size/stroke tweaks (Cross stores it on stroke).
     paint = _symbol_paint_color(sym)
     shape = _symbol_marker_shape(sym)
     with suppress(AttributeError, RuntimeError, TypeError, ValueError):
-        sym.setSize(size_mm)
+        sym.setSize(size)
+    with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+        sym.setSizeUnit(render_unit)
+    for i in range(sym.symbolLayerCount()):
+        sl = sym.symbolLayer(i)
+        if sl is None:
+            continue
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            if hasattr(sl, 'setSize'):
+                sl.setSize(size)
+        with suppress(AttributeError, RuntimeError, TypeError, ValueError):
+            if hasattr(sl, 'setSizeUnit'):
+                sl.setSizeUnit(render_unit)
     # Full colour pass keeps Cross/X on SolidLine + group stroke (not NoPen/black).
+    # Stroke helpers scale relative to ``size`` in the same unit.
     _apply_symbol_color(sym, paint, shape=shape)
 
 
-def apply_marker_size(layer, size_mm):
+def apply_marker_size(layer, size, size_unit='mm'):
+    """Set marker size. ``size_unit`` is ``'mm'`` (paper) or ``'px'`` (screen)."""
     if layer is None:
         return
     renderer = layer.renderer()
     if renderer is None:
         return
-    size_mm = max(0.0, float(size_mm))
+    size = max(0.0, float(size))
     if isinstance(renderer, QgsCategorizedSymbolRenderer):
         for i in range(len(renderer.categories())):
             cat = renderer.categories()[i]
@@ -1422,12 +1738,12 @@ def apply_marker_size(layer, size_mm):
             if sym is None:
                 continue
             cloned = sym.clone()
-            _retune_marker_symbol_size(cloned, size_mm)
+            _retune_marker_symbol_size(cloned, size, size_unit=size_unit)
             renderer.updateCategorySymbol(i, cloned)
     else:
         sym = renderer.symbol() if hasattr(renderer, 'symbol') else None
         if sym is not None:
-            _retune_marker_symbol_size(sym, size_mm)
+            _retune_marker_symbol_size(sym, size, size_unit=size_unit)
     layer.triggerRepaint()
 
 
@@ -1573,13 +1889,13 @@ def _replace_features(layer, feats):
     layer.triggerRepaint()
 
 
-def rebuild_vectors(source, dest):
-    """LineStringZ P2→P3 (or P1→P2) for rows that have an axis."""
+def rebuild_vectors(source, dest, fixed=False, fixed_cm=VECTOR_LEN_CM_DEFAULT):
+    """LineStringZ directed shafts (improved sense) for rows that have an axis."""
     if source is None or dest is None:
         return 0
     feats = []
     for src in source.getFeatures():
-        ends = vector_endpoints(src)
+        ends = vector_draw_endpoints(src, fixed=fixed, fixed_cm=fixed_cm)
         if ends is None:
             continue
         feat = QgsFeature(dest.fields())
@@ -1735,8 +2051,11 @@ def rebuild_section(source, section, mode, z_stretch=1.0, profile=None):
     section.triggerRepaint()
 
 
-def rebuild_section_lines(source, section, mode, z_stretch=1.0, profile=None):
-    """Project P2→P3 (or P1→P2) onto XZ/YZ or profile UZ/VZ as 2D lines."""
+def rebuild_section_lines(
+    source, section, mode, z_stretch=1.0, profile=None,
+    fixed=False, fixed_cm=VECTOR_LEN_CM_DEFAULT,
+):
+    """Project P2→P3 (or fixed-length shafts) onto XZ/YZ or profile UZ/VZ."""
     if source is None or section is None:
         return
     from . import profile as P
@@ -1755,19 +2074,24 @@ def rebuild_section_lines(source, section, mode, z_stretch=1.0, profile=None):
             return
     feats = []
     for src in source.getFeatures():
-        ends = vector_endpoints(src)
+        real = vector_endpoints(src)
+        if real is None:
+            continue
+        # Membership uses the real axis; drawing may use a fixed length.
+        a_real, b_real = real
+        ends = vector_draw_endpoints(src, fixed=fixed, fixed_cm=fixed_cm)
         if ends is None:
             continue
         a, b = ends
-        # Keep vector if either endpoint (or midpoint) sits in the profile.
+        # Keep vector if either real endpoint (or midpoint) sits in the profile.
         if frame is not None:
             mid = (
-                0.5 * (a[0] + b[0]),
-                0.5 * (a[1] + b[1]),
+                0.5 * (a_real[0] + b_real[0]),
+                0.5 * (a_real[1] + b_real[1]),
             )
             if not (
-                P.in_corridor(a[0], a[1], frame, wide_m)
-                or P.in_corridor(b[0], b[1], frame, wide_m)
+                P.in_corridor(a_real[0], a_real[1], frame, wide_m)
+                or P.in_corridor(b_real[0], b_real[1], frame, wide_m)
                 or P.in_corridor(mid[0], mid[1], frame, wide_m)
             ):
                 continue
