@@ -17,7 +17,7 @@ All views share the same data filters and group selection. The plugin operates i
 
 Filter by **group** and **XYZ range**, **Find** records, cut an **A–B profile**, display **points**, **vectors**, or both, generate **kernel-density heatmaps** with isolines, and export publication-ready **PNG/SVG figures** at a true paper scale.
 
-**Licence:** [GNU GPL-2.0-or-later](LICENSE) · © 2026 Antoni Canals-Salomó (URV IPHES-CERCA)
+**Licence:** [GNU GPL-2.0-or-later](LICENSE)
 
 Source code, issues and documentation: <https://github.com/acanals/ARSYSplotQGIS>
 
