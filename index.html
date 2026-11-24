@@ -222,7 +222,7 @@
   <li><strong>Field</strong> — selects the record attribute used to assign colours to the points. Depending on your dataset, this could be material, archaeological level, taxon or another categorical field.</li>
   <li>Coloured <strong>chips</strong> — each chip represents one value in the selected field. Click a chip to hide that category; click it again to show it. Records with no value are grouped under <code>(empty)</code>.</li>
   <li><strong>All / None</strong> — <strong>All</strong> makes every category visible; <strong>None</strong> hides all categories. Use these controls to reset the category selection or start a new selection.</li>
-  <li><strong>Load colours…</strong> — loads an optional UTF-8 <code>.colors</code> file that assigns a colour and, optionally, a Point model shape to each field value. The same format is used in ARSYSplotLite and ARSYSplot. The bundled <code>sample.colors</code> shows the expected layout. Click <strong>Clear</strong> to remove it.</li>
+  <li><strong>Load colours…</strong> — loads an optional UTF-8 <code>.colors</code> file that assigns a colour and, optionally, a Point model shape to each field value. The same format is used in ARSYSplotLite and ARSYSplot. The bundled <code>data/sample.colors</code> shows the expected layout. Click <strong>Clear</strong> to remove it.</li>
 </ul>
 <p><strong><code>.colors</code> format</strong> (shared by all ARSYSplot editions): UTF-8 text. A line with only a field name starts a section. Under that section, each category is one line: <code>value;colour;shape</code> (shape may be omitted: <code>value;colour</code>). Colour is <code>#rrggbb</code>. The colours and shapes of a section apply <strong>only when that field is the active Group → Field</strong>. If you switch Group to another field, or a category value is not listed in the matching section, the plugin keeps its <strong>default</strong> colour and the current Point model shape.</p>
 <p>Example file with two sections (<code>material</code> and <code>nivell</code>), each with two categories:</p>
@@ -240,7 +240,7 @@ nivell
   <tr><td><code>nivell</code></td><td><code>1</code></td><td><code>#b5651d</code></td><td><code>circle</code></td><td>Archaeological level 1</td></tr>
   <tr><td><code></code></td><td><code>2</code></td><td><code>#5a6b7a</code></td><td><code>square</code></td><td>Archaeological level 2</td></tr>
 </table>
-<p>With Group → Field = <code>material</code>, only the <code>material</code> lines above are used; the <code>nivell</code> block is ignored until you select that field. The bundled <code>sample.colors</code> follows the same rules (it styles <code>material</code> and <code>categoria</code> for the sample dataset).</p>
+<p>With Group → Field = <code>material</code>, only the <code>material</code> lines above are used; the <code>nivell</code> block is ignored until you select that field. The bundled <code>data/sample.colors</code> follows the same rules (it styles <code>material</code> and <code>categoria</code> for the sample dataset).</p>
 <p>Allowed <strong>shape</strong> names: <code>circle</code>, <code>square</code>, <code>diamond</code>, <code>triangle</code>, <code>triangle-inverted</code>, <code>equilateral_triangle</code>, <code>pentagon</code>, <code>hexagon</code>, <code>octagon</code>, <code>star</code>, <code>cross</code>, <code>cross2</code>.</p>
 <p class="to-toc"><a href="#toc">↑ Contents</a></p>
 

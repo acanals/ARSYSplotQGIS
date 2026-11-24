@@ -35,7 +35,9 @@ from .crs_util import site_crs
 from .layers import html_tooltip
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
-SAMPLE_CSV = os.path.join(PLUGIN_DIR, "sample.csv")
+DATA_DIR = os.path.join(PLUGIN_DIR, "data")
+SAMPLE_CSV = os.path.join(DATA_DIR, "sample.csv")
+SAMPLE_COLORS = os.path.join(DATA_DIR, "sample.colors")
 
 X_HINTS = ("p1x", "x1", "x", "east", "easting")
 Y_HINTS = ("p1y", "y1", "y", "north", "northing")
@@ -743,6 +745,8 @@ class ImportCsvDialog(QDialog):
     def _start_dir(self):
         if self.path:
             return os.path.dirname(self.path)
+        if os.path.isdir(DATA_DIR):
+            return DATA_DIR
         return PLUGIN_DIR
 
     def _choose(self):
@@ -776,7 +780,7 @@ class ImportCsvDialog(QDialog):
     def _use_sample(self):
         if not os.path.isfile(SAMPLE_CSV):
             QMessageBox.warning(
-                self, "Import", "sample.csv was not found next to the plugin."
+                self, "Import", "sample.csv was not found in the plugin data/ folder."
             )
             return
         idx = self.cmb_kind.findData(self.KIND_CSV)

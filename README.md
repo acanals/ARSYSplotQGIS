@@ -117,15 +117,16 @@ After data are loaded, use **Options → To QGIS layer** (footer next to Reset) 
 
 ### Sample data
 
-The plugin includes `sample.csv`, containing example data from ArcheSite1 (2 500 points).
+The plugin includes `data/sample.csv`, containing example data from ArcheSite1 (2 500 points).
 
 Its fields are:
 
-`p1x | p1y | p1z | p2x | p2y | p2z | p3x | p3y | p3z | material | categoria | taxo | nivell`
+`p1x | p1y | p1z | p2x | p2y | p2z | p3x | p3y | p3z | quadre | material | categoria | taxo | nivell | long | large | depth`
 
 - **P1** is the object centre on every row.
 - **P2** and **P3** are the two ends of the orientation vector (**P2→P3**). They are filled only for records in **nivell 1** (500 points). Other levels leave those columns empty.
-- **material**, **categoria**, **taxo** and **nivell** are classification fields. After **Load sample**, **Group** defaults to `material`.
+- **material**, **categoria**, **taxo**, **nivell** and **quadre** are classification / grid fields. After **Load sample**, **Group** defaults to `material`.
+- **long**, **large** and **depth** are object dimensions in centimetres on every row, with **long ≥ large ≥ depth**. When a P2→P3 axis exists, **long** follows that length (with a small jitter); otherwise sizes follow the category.
 
 Load it with **Load sample**. Set **Draw** to **Vectors** or **Both** to show the nivell 1 axes. To isolate them, set **Group → Field** to `nivell` and leave only **1** enabled.
 
@@ -143,7 +144,7 @@ The Group panel controls how the archaeological data is classified and displayed
 - **Coloured chips** — one for each unique attribute value. Click a chip to show or hide that group.
 - **All / None** — quickly enable or disable all groups.
 - **Empty values** — missing or empty attributes are displayed as `(empty)`.
-- **Load colours…** — optional ``.colors`` file (field sections + ``value;colour;shape``) shared with Lite / ARSYSplot. **Clear** drops it. Bundled example: `sample.colors`.
+- **Load colours…** — optional ``.colors`` file (field sections + ``value;colour;shape``) shared with Lite / ARSYSplot. **Clear** drops it. Bundled example: `data/sample.colors`.
 
 Style file format (UTF-8):
 

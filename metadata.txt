@@ -51,7 +51,7 @@ about=ARSYSplotQGIS is a QGIS 3 plugin developed as the QGIS counterpart of ARSY
     - No additional pip packages, external binaries or internet connection required.
 
     SAMPLE AND DOCUMENTATION
-    - Includes sample.csv. Select Load sample to explore the plugin.
+    - Includes data/sample.csv. Select Load sample to explore the plugin.
     - Documentation: Help → Plugins → ARSYSplotQGIS or the project README (homepage).
 
     LICENCE
@@ -60,7 +60,7 @@ tracker=https://github.com/acanals/ARSYSplotQGIS/issues
 repository=https://github.com/acanals/ARSYSplotQGIS
 homepage=https://github.com/acanals/ARSYSplotQGIS
 category=Vector
-icon=ArcheIcon.png
+icon=icons/ArcheIcon.png
 experimental=False
 deprecated=False
 hasProcessingProvider=False

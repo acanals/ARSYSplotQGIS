@@ -4,7 +4,7 @@
 # A bare line starts a field section. Flat lines (before any section) apply
 # to whichever Group → Field is selected.
 #
-# Matched to bundled sample.csv (material / categoria).
+# Matched to bundled data/sample.csv (material / categoria).
 
 material
 lithic;#c9b896;cross

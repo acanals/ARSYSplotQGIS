@@ -77,6 +77,8 @@ from . import view3d
 from .colors_util import css_hex, pick_measure_stroke
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
+ICONS_DIR = os.path.join(PLUGIN_DIR, "icons")
+DATA_DIR = os.path.join(PLUGIN_DIR, "data")
 
 from .axes_grid import (
     PAD_B,
@@ -427,8 +429,8 @@ _CLIP_SPIN_BTN = 14  # px; must match #arsysClipSpin::up/down-button width
 def _clip_spin_css():
     """Min/Max only: digits flush to arrows — no spare padding strip."""
     t = UI_THEME
-    spin_up = os.path.join(PLUGIN_DIR, "spin_up.svg").replace("\\", "/")
-    spin_down = os.path.join(PLUGIN_DIR, "spin_down.svg").replace("\\", "/")
+    spin_up = os.path.join(ICONS_DIR, "spin_up.svg").replace("\\", "/")
+    spin_down = os.path.join(ICONS_DIR, "spin_down.svg").replace("\\", "/")
     return (
         "QDoubleSpinBox#arsysClipSpin {"
         "  background:%(btn)s; color:%(ink)s;"
@@ -909,7 +911,7 @@ class DensityScaleBar(QWidget):
 
 def _themed_icon(filename, ink, size=14):
     """SVG icon with cream strokes remapped to the theme ink colour."""
-    path = os.path.join(PLUGIN_DIR, filename)
+    path = os.path.join(ICONS_DIR, filename)
     try:
         with open(path, "r", encoding="utf-8") as fh:
             raw = fh.read()
@@ -2891,7 +2893,7 @@ class ARSYSDock(QMainWindow):
 
         self.setWindowTitle("ARSYSplotQGIS")
         self.setObjectName("ARSYSplotQGISWindow")
-        self.setWindowIcon(QIcon(os.path.join(PLUGIN_DIR, "ArcheIcon.png")))
+        self.setWindowIcon(QIcon(os.path.join(ICONS_DIR, "ArcheIcon.png")))
         self.setWindowFlag(Qt.WindowType.Window, True)
         self.resize(1280, 840)
         self.setMinimumSize(720, 520)
@@ -2942,8 +2944,8 @@ class ARSYSDock(QMainWindow):
 
     def _root_stylesheet(self):
         t = UI_THEME
-        spin_up = os.path.join(PLUGIN_DIR, "spin_up.svg").replace("\\", "/")
-        spin_down = os.path.join(PLUGIN_DIR, "spin_down.svg").replace("\\", "/")
+        spin_up = os.path.join(ICONS_DIR, "spin_up.svg").replace("\\", "/")
+        spin_down = os.path.join(ICONS_DIR, "spin_down.svg").replace("\\", "/")
         return (
             "QMainWindow, QWidget { background:%(bg)s; color:%(ink)s; font-size:12px; }"
             "QPushButton { background:%(btn)s; color:%(ink)s;"
@@ -3349,36 +3351,20 @@ class ARSYSDock(QMainWindow):
             )
         )
         self.cmb_group.currentTextChanged.connect(self._on_group_field)
+        field_row = QHBoxLayout()
+        field_row.setSpacing(6)
+        field_lab = QLabel("Field")
+        field_lab.setBuddy(self.cmb_group)
+        field_row.addWidget(field_lab)
+        field_row.addWidget(self.cmb_group, 1)
         row = QHBoxLayout()
+        row.setSpacing(4)
         self.btn_all = QPushButton("All")
         self.btn_none = QPushButton("None")
         self.btn_all.setToolTip(L.html_tooltip("Show **every** group."))
         self.btn_none.setToolTip(L.html_tooltip("Hide **every** group."))
         self.btn_all.clicked.connect(lambda: self._set_all_groups(True))
         self.btn_none.clicked.connect(lambda: self._set_all_groups(False))
-        row.addWidget(self.btn_all)
-        row.addWidget(self.btn_none)
-        self.group_wrap = FlowHost()
-        self.group_layout = FlowLayout(
-            self.group_wrap, margin=0, h_spacing=3, v_spacing=2
-        )
-        scroll = QScrollArea()
-        scroll.setObjectName("arsysGroupScroll")
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(self.group_wrap)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        # Height follows chips (see _fit_group_chip_area); do not eat blank space.
-        scroll.setMinimumHeight(28)
-        scroll.setMaximumHeight(220)
-        self._group_scroll = scroll
-        self._group_box = gbox
-        gcol.addWidget(QLabel("Field"))
-        gcol.addWidget(self.cmb_group)
-        gcol.addLayout(row)
-        style_row = QHBoxLayout()
-        style_row.setSpacing(4)
         self.btn_style = QPushButton("Load colours…")
         self.btn_style.setToolTip(
             L.html_tooltip(
@@ -3396,9 +3382,28 @@ class ARSYSDock(QMainWindow):
         )
         self.btn_style_clear.clicked.connect(self.clear_style_file)
         self.btn_style_clear.setEnabled(False)
-        style_row.addWidget(self.btn_style, 1)
-        style_row.addWidget(self.btn_style_clear)
-        gcol.addLayout(style_row)
+        row.addWidget(self.btn_all, 1)
+        row.addWidget(self.btn_none, 1)
+        row.addWidget(self.btn_style, 1)
+        row.addWidget(self.btn_style_clear, 1)
+        self.group_wrap = FlowHost()
+        self.group_layout = FlowLayout(
+            self.group_wrap, margin=0, h_spacing=3, v_spacing=2
+        )
+        scroll = QScrollArea()
+        scroll.setObjectName("arsysGroupScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(self.group_wrap)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        # Height follows chips (see _fit_group_chip_area); do not eat blank space.
+        scroll.setMinimumHeight(28)
+        scroll.setMaximumHeight(220)
+        self._group_scroll = scroll
+        self._group_box = gbox
+        gcol.addLayout(field_row)
+        gcol.addLayout(row)
         gcol.addWidget(scroll, 0)
         gbox.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         # Group = content-sized; Options gets the leftover vertical space.
@@ -4601,7 +4606,7 @@ class ARSYSDock(QMainWindow):
         path = importer.SAMPLE_CSV
         if not os.path.isfile(path):
             QMessageBox.warning(
-                self, "Sample", "sample.csv was not found in the plugin folder."
+                self, "Sample", "sample.csv was not found in the plugin data/ folder."
             )
             return
         try:
@@ -5725,10 +5730,10 @@ class ARSYSDock(QMainWindow):
         self._apply_point_sizes(for_paper=False)
 
     def load_style_file(self):
-        start = PLUGIN_DIR
+        start = DATA_DIR if os.path.isdir(DATA_DIR) else PLUGIN_DIR
         book = getattr(self, "_style_book", None)
         if book and book.get("path"):
-            start = os.path.dirname(book["path"]) or PLUGIN_DIR
+            start = os.path.dirname(book["path"]) or start
         path, _flt = QFileDialog.getOpenFileName(
             self,
             "Load group colours",

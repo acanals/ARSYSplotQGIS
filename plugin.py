@@ -9,6 +9,7 @@ from qgis.PyQt.QtWidgets import QAction
 from .dock import ARSYSDock
 
 PLUGIN_DIR = os.path.dirname(__file__)
+ICONS_DIR = os.path.join(PLUGIN_DIR, 'icons')
 MENU_NAME = 'ARSYSplotQGIS'
 # Plain text: QGIS toolbar/menu tips often blank out rich HTML from html_tooltip.
 TOOLBAR_TIP = '<b>ARSYSplot</b>: plans and profiles'
@@ -22,7 +23,7 @@ class ARSYSplotQGISPlugin:
         self.dock = None
 
     def initGui(self):
-        icon = QIcon(os.path.join(PLUGIN_DIR, 'ArcheIcon.png'))
+        icon = QIcon(os.path.join(ICONS_DIR, 'ArcheIcon.png'))
         self.action = QAction(icon, 'ARSYSplotQGIS', self.iface.mainWindow())
         self.action.setToolTip(TOOLBAR_TIP)
         self.action.setStatusTip(TOOLBAR_TIP)
